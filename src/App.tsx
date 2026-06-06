@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { LogOut, Loader, AlertCircle } from 'lucide-react';
-import { GithubIcon } from './components/GithubIcon';
 import { GitHubConnect } from './components/GitHubConnect';
 import { Dashboard } from './components/Dashboard';
 import { ContributionGraph } from './components/ContributionGraph';
