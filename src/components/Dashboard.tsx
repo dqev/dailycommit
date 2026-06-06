@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { Play, RefreshCw, ExternalLink, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Play, RefreshCw, ExternalLink, CheckCircle, AlertCircle, Loader, Sparkles, StopCircle } from 'lucide-react';
 import type { GitHubUser, GitCommit } from '../types';
-import { githubService, GITHUB_OWNER, GITHUB_REPO } from '../services/github';
+import { githubService } from '../services/github';
 import confetti from 'canvas-confetti';
 
 interface DashboardProps {
@@ -11,6 +11,8 @@ interface DashboardProps {
   onRefresh: () => Promise<void>;
   onToggleStatus: (active: boolean) => Promise<void>;
   isActive: boolean;
+  repoOwner: string;
+  repoName: string;
 }
 
 const PREBUILT_MESSAGES = [
@@ -28,12 +30,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onRefresh,
   onToggleStatus,
   isActive,
+  repoOwner,
+  repoName,
 }) => {
   const [commitMessage, setCommitMessage] = useState(PREBUILT_MESSAGES[0]);
   const [pushing, setPushing] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  // Mass commit states
+  const [massLimit, setMassLimit] = useState(20);
+  const [massMessage, setMassMessage] = useState('chore: high volume activity booster');
+  const [massProgress, setMassProgress] = useState<number | null>(null);
+  const [massRunning, setMassRunning] = useState(false);
+  const [massError, setMassError] = useState<string | null>(null);
+  const [turboMode, setTurboMode] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -87,6 +100,104 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
+  const handleMassBoost = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (massRunning || massLimit <= 0) return;
+
+    setMassRunning(true);
+    setMassProgress(0);
+    setMassError(null);
+    setStatusMessage(null);
+
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    if (isLocalhost) {
+      setStatusMessage(`Initiating super-fast local commit boost for ${massLimit} commits...`);
+      try {
+        const response = await fetch('/api/bulk-commit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            count: massLimit,
+            email: user.email || `${user.login}@users.noreply.github.com`,
+            message: massMessage.trim() || 'chore: mass activity boost',
+            owner: repoOwner,
+            repo: repoName,
+            token,
+          }),
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to execute local bulk commits');
+        }
+
+        setStatusMessage(`Successfully pushed all ${massLimit} commits to GitHub via local engine!`);
+        
+        confetti({
+          particleCount: 150,
+          spread: 80,
+          origin: { y: 0.7 },
+          colors: ['#39d353', '#26a641', '#006d32', '#f5f5f5'],
+        });
+
+        await onRefresh();
+      } catch (err: any) {
+        setMassError(err.message || 'Local bulk commit booster failed.');
+        setStatusMessage(`Booster failed: ${err.message}`);
+      } finally {
+        setMassRunning(false);
+        setMassProgress(null);
+      }
+    } else {
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      try {
+        await githubService.pushBatchCommits(
+          token,
+          massLimit,
+          massMessage.trim() || 'chore: mass activity boost',
+          (progress) => {
+            setMassProgress(progress);
+          },
+          controller.signal,
+          turboMode ? 0 : 200
+        );
+
+        setStatusMessage(`Successfully pushed all ${massLimit} boost commits!`);
+        
+        confetti({
+          particleCount: 150,
+          spread: 80,
+          origin: { y: 0.7 },
+          colors: ['#39d353', '#26a641', '#006d32', '#f5f5f5'],
+        });
+
+        await onRefresh();
+      } catch (err: any) {
+        if (err.message === 'Cancelled by user') {
+          setStatusMessage('Mass commit boost cancelled.');
+        } else {
+          setMassError(err.message || 'Mass commit boost failed.');
+          setStatusMessage(`Mass commit boost failed: ${err.message}`);
+        }
+      } finally {
+        setMassRunning(false);
+        setMassProgress(null);
+        abortControllerRef.current = null;
+      }
+    }
+  };
+
+  const handleCancelMassBoost = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       
@@ -95,7 +206,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <img src={user.avatar_url} alt={user.name} className="avatar" style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%' }} />
           <div>
-            <h2 style={{ fontSize: '1.1rem', margin: 0, fontWeight: '750' }}>{GITHUB_OWNER}/{GITHUB_REPO}</h2>
+            <h2 style={{ fontSize: '1.1rem', margin: 0, fontWeight: '750' }}>{repoOwner}/{repoName}</h2>
             <p className="subtitle" style={{ fontSize: '0.8rem', margin: 0 }}>
               Tracking Booster Repository
             </p>
@@ -104,7 +215,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <a
-            href={`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`}
+            href={`https://github.com/${repoOwner}/${repoName}`}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-secondary"
@@ -213,11 +324,145 @@ export const Dashboard: React.FC<DashboardProps> = ({
               type="checkbox"
               checked={isActive}
               onChange={handleToggle}
-              disabled={toggling || pushing}
+              disabled={toggling || pushing || massRunning}
             />
             <span className="toggle-slider"></span>
           </label>
         </div>
+      </div>
+
+      {/* Mass Commit Booster Panel */}
+      <div className="glass-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+          <Sparkles size={18} style={{ color: 'var(--accent-cyan)' }} />
+          <h3 style={{ margin: 0 }}>Mass Commit Booster</h3>
+        </div>
+        <p className="subtitle" style={{ margin: 0, marginBottom: '1rem' }}>
+          Generate a high volume of activity commits. Each commit appends a small entry to your log to build a dense heat map.
+        </p>
+
+        <form onSubmit={handleMassBoost}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            <div className="form-group" style={{ flex: '1 1 120px', margin: 0 }}>
+              <label className="form-label" htmlFor="mass-limit">
+                Commit Limit (Count)
+              </label>
+              <input
+                id="mass-limit"
+                type="number"
+                min="1"
+                max="100000"
+                className="form-input"
+                value={massLimit}
+                onChange={(e) => setMassLimit(Math.max(1, parseInt(e.target.value) || 1))}
+                disabled={massRunning}
+                required
+              />
+            </div>
+            <div className="form-group" style={{ flex: '2 1 200px', margin: 0 }}>
+              <label className="form-label" htmlFor="mass-msg">
+                Commit Message Prefix
+              </label>
+              <input
+                id="mass-msg"
+                type="text"
+                className="form-input"
+                value={massMessage}
+                onChange={(e) => setMassMessage(e.target.value)}
+                placeholder="chore: mass boost"
+                disabled={massRunning}
+                required
+              />
+            </div>
+          </div>
+
+          {/* Turbo Mode Checkbox */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: '#1e1e1e', borderRadius: '8px', marginBottom: '1rem' }}>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={turboMode}
+                onChange={(e) => setTurboMode(e.target.checked)}
+                disabled={massRunning}
+              />
+              <span className="toggle-slider"></span>
+            </label>
+            <div>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block' }}>Turbo Mode</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                Removes the 200ms delay between commits. Pushes at maximum speed allowed by your network.
+              </span>
+            </div>
+          </div>
+
+          {massRunning && (
+            <div style={{ marginBottom: '1.25rem' }}>
+              {massProgress !== null && massProgress > 0 ? (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+                    <span>Pushed {massProgress} of {massLimit} commits</span>
+                    <span>{Math.round((massProgress / massLimit) * 100)}%</span>
+                  </div>
+                  <div className="progress-bar-container" style={{ width: '100%', height: '8px', background: '#1e1e1e', borderRadius: '4px', overflow: 'hidden' }}>
+                    <div 
+                      className="progress-bar-fill" 
+                      style={{ 
+                        width: `${(massProgress / massLimit) * 100}%`, 
+                        height: '100%', 
+                        background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-green))',
+                        transition: 'width 0.15s ease' 
+                      }} 
+                    />
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.75rem', background: '#1e1e1e', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  <Loader size={14} className="animate-spin" style={{ color: 'var(--accent-cyan)' }} />
+                  <span>Generating commits locally and pushing in a single batch (this will take only a few seconds)...</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {massError && (
+            <div className="alert-banner warning" style={{ marginBottom: '1rem', marginTop: '0.5rem' }}>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <div>{massError}</div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              style={{ flex: 1, height: '2.75rem', gap: '0.5rem' }}
+              disabled={massRunning || pushing}
+            >
+              {massRunning ? (
+                <>
+                  <Loader size={16} className="animate-spin" />
+                  Boosting ({massProgress}/{massLimit})...
+                </>
+              ) : (
+                <>
+                  <Play size={16} />
+                  Start Mass Boost
+                </>
+              )}
+            </button>
+            {massRunning && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleCancelMassBoost}
+                style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', width: '3.5rem', padding: 0 }}
+                title="Cancel booster process"
+              >
+                <StopCircle size={18} />
+              </button>
+            )}
+          </div>
+        </form>
       </div>
 
       {/* Real commits feed */}

@@ -3,7 +3,7 @@ import { LogOut, Loader, AlertCircle } from 'lucide-react';
 import { GitHubConnect } from './components/GitHubConnect';
 import { Dashboard } from './components/Dashboard';
 import { ContributionGraph } from './components/ContributionGraph';
-import { githubService, GITHUB_OWNER, GITHUB_REPO } from './services/github';
+import { githubService, setGithubRepoDetails } from './services/github';
 import type { GitHubUser, GitCommit, ContributionCalendar } from './types';
 
 function App() {
@@ -13,6 +13,9 @@ function App() {
   const [contributions, setContributions] = useState<ContributionCalendar | null>(null);
   const [isActive, setIsActive] = useState(false);
   
+  const [repoOwner, setRepoOwner] = useState(() => localStorage.getItem('github_booster_owner') || 'devchauhann');
+  const [repoName, setRepoName] = useState(() => localStorage.getItem('github_booster_repo') || 'activity');
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +44,7 @@ function App() {
       console.error(err);
       setError(
         err.message?.includes('404')
-          ? `Could not find repository '${GITHUB_OWNER}/${GITHUB_REPO}'. Make sure the repository exists and your token has correct access.`
+          ? `Could not find repository '${repoOwner}/${repoName}'. Make sure the repository exists and your token has correct access.`
           : err.message || 'Authentication failed. Please check your Personal Access Token.'
       );
       if (!err.message?.includes('404')) {
@@ -73,8 +76,11 @@ function App() {
     }
   };
 
-  const handleConnect = (newToken: string, githubUser: GitHubUser) => {
+  const handleConnect = (newToken: string, owner: string, repo: string, githubUser: GitHubUser) => {
     localStorage.setItem('github_booster_token', newToken);
+    setGithubRepoDetails(owner, repo);
+    setRepoOwner(owner);
+    setRepoName(repo);
     setToken(newToken);
     setUser(githubUser);
     bootstrapApp(newToken);
@@ -82,6 +88,8 @@ function App() {
 
   const handleDisconnect = () => {
     localStorage.removeItem('github_booster_token');
+    localStorage.removeItem('github_booster_owner');
+    localStorage.removeItem('github_booster_repo');
     setToken(null);
     setUser(null);
     setCommits([]);
@@ -157,6 +165,8 @@ function App() {
             onRefresh={() => fetchBoosterData(token)}
             onToggleStatus={handleToggleStatus}
             isActive={isActive}
+            repoOwner={repoOwner}
+            repoName={repoName}
           />
           {contributions && <ContributionGraph contributions={contributions} />}
         </div>
@@ -167,13 +177,13 @@ function App() {
         <p>
           Created for{' '}
           <a
-            href={`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`}
+            href={`https://github.com/${repoOwner}/${repoName}`}
             target="_blank"
             rel="noopener noreferrer"
             className="footer-link"
             style={{ fontWeight: '600' }}
           >
-            {GITHUB_OWNER}/{GITHUB_REPO}
+            {repoOwner}/{repoName}
           </a>.
         </p>
       </footer>

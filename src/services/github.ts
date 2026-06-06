@@ -14,8 +14,15 @@ function encodeBase64(str: string): string {
   return btoa(unescape(encodeURIComponent(str)));
 }
 
-export const GITHUB_OWNER = 'devchauhann';
-export const GITHUB_REPO = 'activity';
+export let GITHUB_OWNER = localStorage.getItem('github_booster_owner') || 'devchauhann';
+export let GITHUB_REPO = localStorage.getItem('github_booster_repo') || 'activity';
+
+export const setGithubRepoDetails = (owner: string, repo: string) => {
+  GITHUB_OWNER = owner;
+  GITHUB_REPO = repo;
+  localStorage.setItem('github_booster_owner', owner);
+  localStorage.setItem('github_booster_repo', repo);
+};
 
 export const githubService = {
   // Verify Personal Access Token
@@ -39,6 +46,17 @@ export const githubService = {
       html_url: data.html_url,
       email: data.email || null,
     };
+  },
+
+  // Verify Repository exists and is accessible
+  async verifyRepo(token: string, owner: string, repo: string): Promise<boolean> {
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
+    return response.ok;
   },
 
   // Get a file's content and SHA
@@ -398,5 +416,55 @@ export const githubService = {
       url: item.html_url,
       author: item.commit.author.name,
     }));
+  },
+
+  // Push a batch of direct commits sequentially to activity_log.txt
+  async pushBatchCommits(
+    token: string,
+    limit: number,
+    baseMessage: string,
+    onProgress: (currentIndex: number) => void,
+    signal?: AbortSignal,
+    delayMs: number = 200
+  ): Promise<void> {
+    // 1. Fetch file content and SHA first
+    const file = await this.getFile(token, 'activity_log.txt');
+    let currentSha = file ? file.sha : undefined;
+    let currentContent = file ? file.content : '# GitHub Activity Booster - Activity Log\n';
+
+    // 2. Loop to push multiple commits
+    for (let i = 0; i < limit; i++) {
+      if (signal?.aborted) {
+        throw new Error('Cancelled by user');
+      }
+
+      const commitMsg = `${baseMessage} [boost ${i + 1}/${limit}]`;
+      const dateStr = new Date().toISOString();
+      currentContent = `${currentContent}\nManual boost: ${dateStr} - ${commitMsg}`;
+
+      const res = await this.updateFile(
+        token,
+        'activity_log.txt',
+        currentContent,
+        commitMsg,
+        currentSha
+      );
+
+      currentSha = res.content.sha;
+      onProgress(i + 1);
+
+      // Add delay to make it robust and allow UI response
+      if (delayMs > 0 && i < limit - 1) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, delayMs);
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              clearTimeout(timer);
+              reject(new Error('Cancelled by user'));
+            });
+          }
+        });
+      }
+    }
   },
 };
