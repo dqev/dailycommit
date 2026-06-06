@@ -1,0 +1,65 @@
+name: GitHub Activity Booster
+
+on:
+  schedule:
+    # Runs daily at a scheduled time.
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+    inputs:
+      commit_message:
+        description: 'Commit message for this boost'
+        required: false
+        default: 'chore: auto boost activity [skip ci]'
+      committer_email:
+        description: 'Email address to associate with the commit'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  boost:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Update activity log
+        run: |
+          echo "Boosted on: $(date)" >> activity_log.txt
+
+      - name: Git commit and push
+        run: |
+          EMAIL="${{ github.event.inputs.committer_email }}"
+          if [ -z "$EMAIL" ]; then
+            if [ -f .booster_email ]; then
+              EMAIL=$(cat .booster_email)
+            else
+              # Use the default actor email if not specified
+              EMAIL="${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+            fi
+          fi
+          
+          MSG="${{ github.event.inputs.commit_message }}"
+          if [ -z "$MSG" ]; then
+            if [ -f .booster_msg ]; then
+              MSG=$(cat .booster_msg)
+            else
+              MSG="chore: auto boost activity [skip ci]"
+            fi
+          fi
+
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "$EMAIL"
+          
+          git add activity_log.txt
+          
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            git commit -m "$MSG"
+            git push
+          else
+            echo "No changes to commit."
+          fi
