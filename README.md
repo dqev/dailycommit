@@ -1,73 +1,98 @@
-# React + TypeScript + Vite
+# Auto GitHub Activity Tracker & Heatmap
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A sleek, mobile-friendly, flat-style dashboard designed to manage and monitor GitHub activity for a specific repository. It queries the user's real GitHub contribution graph (heatmap) and commit history, provides an instant manual "Push to Repo" tool to trigger commits, and includes a toggle to activate/deactivate a scheduled daily background auto-commit workflow powered by GitHub Actions.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## ✨ Features
 
-## React Compiler
+- **Real-Time Heatmap Integration**: Displays a continuous rolling 365-day contribution calendar powered by [`cal-heatmap` (v4)](https://cal-heatmap.com/).
+- **Instant Manual Commit**: Trigger a manual commit directly to a tracked log file (`activity_log.txt`) using the GitHub REST API, instantly boosting activity.
+- **Automated Workflow Toggle**: Enable or disable a pre-configured scheduled GitHub Actions workflow (`auto-commit.yml`) to automatically push daily commits.
+- **Premium Flat Aesthetic**: Built with a gorgeous, dark-themed, minimalist UI:
+  - Global font: **Inter**
+  - Background: `#181818` (flat, no gradients, no borders)
+  - Cards & Panels: `#222222` (flat with `12px` rounded corners)
+  - Typography: `#f5f5f5` flat light grey
+- **Secure Authentication**: Connect safely using a Personal Access Token (PAT).
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## 🚀 Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### 1. Prerequisites
+You need a **GitHub Personal Access Token (PAT)** to interact with your repository.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+#### How to Create a GitHub Classic PAT:
+1. Go to your GitHub account settings: **Settings > Developer settings > Personal access tokens > Tokens (classic)**.
+2. Click **Generate new token** -> **Generate new token (classic)**.
+3. Set a descriptive name (e.g., `auto-github-dashboard`) and choose an expiration duration.
+4. Select the following scopes:
+   - **`repo`** (Full control of private repositories)
+   - **`workflow`** (Update GitHub Action workflows)
+5. Click **Generate token** and copy the generated token immediately (you won't be able to see it again!).
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+---
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### 2. Local Installation
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Follow these steps to run the application locally on your machine:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/devchauhann/activity.git
+   cd activity
+   ```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+2. **Install Dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Start the Development Server**:
+   ```bash
+   npm run dev
+   ```
+
+4. Open `http://localhost:5173` in your browser.
+
+---
+
+### 3. Deploying to Vercel
+
+This is a Single Page Application (SPA) built with Vite, React, and TypeScript. You can deploy it to Vercel for free:
+
+1. **Install Vercel CLI** (Optional, or connect via Vercel Dashboard):
+   ```bash
+   npm install -g vercel
+   ```
+
+2. **Deploy**:
+   ```bash
+   vercel
+   ```
+
+3. **SPA Routing Configuration**:
+   The project includes a `vercel.json` file in the root directory to handle clean SPA routing redirects, ensuring client-side routes are resolved correctly:
+   ```json
+   {
+     "rewrites": [
+       {
+         "source": "/(.*)",
+         "destination": "/index.html"
+       }
+     ]
+   }
+   ```
+
+---
+
+## 🛠️ Project Structure
+
+- **`index.html`**: Root template referencing the global Google Fonts (Inter).
+- **`src/index.css`**: Global design system, colors, utilities, and reset rules.
+- **`src/services/github.ts`**: GitHub REST & GraphQL API client handling PAT validation, files, workflows, commits, and user metadata.
+- **`src/components/GitHubConnect.tsx`**: A mathematically centered PAT authorization login component.
+- **`src/components/Dashboard.tsx`**: Primary workflow, tracking panel, and manual commit triggers.
+- **`src/components/ContributionGraph.tsx`**: Lightweight contribution graph container wrapping `cal-heatmap` implementation.
+- **`.github/workflows/auto-commit.yml`**: Scheduled daily CRON job auto-pushing commits to `activity_log.txt`.
