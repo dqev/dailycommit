@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Play, RefreshCw, ExternalLink, CheckCircle, AlertCircle, Loader, Sparkles, StopCircle } from 'lucide-react';
+import { Play, Refresh, Link2, CheckCircle, Danger2, Loader, Flash2, CloseCircle2 } from 'reicon-react';
 import type { GitHubUser, GitCommit } from '../types';
 import { githubService } from '../services/github';
 import confetti from 'canvas-confetti';
@@ -13,6 +13,8 @@ interface DashboardProps {
   isActive: boolean;
   repoOwner: string;
   repoName: string;
+  hasWorkflow: boolean;
+  onInitialize: () => Promise<void>;
 }
 
 const PREBUILT_MESSAGES = [
@@ -32,12 +34,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
   isActive,
   repoOwner,
   repoName,
+  hasWorkflow,
+  onInitialize,
 }) => {
   const [commitMessage, setCommitMessage] = useState(PREBUILT_MESSAGES[0]);
   const [pushing, setPushing] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [initializing, setInitializing] = useState(false);
+
+  const handleInitialize = async () => {
+    setInitializing(true);
+    setStatusMessage('Initializing repository workflow and configurations...');
+    try {
+      await onInitialize();
+      setStatusMessage('Auto-Committer successfully initialized in repository!');
+    } catch (err: any) {
+      setStatusMessage(`Initialization failed: ${err.message}`);
+    } finally {
+      setInitializing(false);
+    }
+  };
 
   // Mass commit states
   const [massLimit, setMassLimit] = useState(20);
@@ -130,8 +148,39 @@ export const Dashboard: React.FC<DashboardProps> = ({
         });
 
         if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || 'Failed to execute local bulk commits');
+          throw new Error('Failed to start local bulk commits');
+        }
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (reader) {
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep partial line
+
+            for (const line of lines) {
+              if (line.trim()) {
+                const data = JSON.parse(line);
+                if (data.status === 'syncing') {
+                  setStatusMessage('Syncing with remote GitHub repository...');
+                } else if (data.status === 'committing') {
+                  setMassProgress(data.progress);
+                  setStatusMessage(`Locally generating commit ${data.progress} of ${massLimit}...`);
+                } else if (data.status === 'pushing') {
+                  setMassProgress(massLimit); // Ensure progress bar is full
+                  setStatusMessage(`Pushing all ${massLimit} commits to GitHub...`);
+                } else if (data.error) {
+                  throw new Error(data.error);
+                }
+              }
+            }
+          }
         }
 
         setStatusMessage(`Successfully pushed all ${massLimit} commits to GitHub via local engine!`);
@@ -206,7 +255,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <img src={user.avatar_url} alt={user.name} className="avatar" style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%' }} />
           <div>
-            <h2 style={{ fontSize: '1.1rem', margin: 0, fontWeight: '750' }}>{repoOwner}/{repoName}</h2>
+            <h2 style={{ fontSize: '1.1rem', margin: 0, fontWeight: 500 }}>{repoOwner}/{repoName}</h2>
             <p className="subtitle" style={{ fontSize: '0.8rem', margin: 0 }}>
               Tracking Booster Repository
             </p>
@@ -222,7 +271,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             style={{ padding: '0.5rem 0.75rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
           >
             Repo
-            <ExternalLink size={12} />
+            <Link2 size={12} />
           </a>
           <button
             onClick={handleRefresh}
@@ -231,10 +280,38 @@ export const Dashboard: React.FC<DashboardProps> = ({
             disabled={refreshing}
             title="Refresh statistics"
           >
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+            <Refresh size={14} className={refreshing ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
+
+      {!hasWorkflow && (
+        <div className="glass-panel" style={{ borderLeft: '3px solid var(--accent-cyan)', background: 'rgba(6, 182, 212, 0.03)', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Danger2 size={16} style={{ color: 'var(--accent-cyan)' }} />
+            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Auto-Committer Not Configured</h3>
+          </div>
+          <p className="subtitle" style={{ fontSize: '0.75rem', margin: 0, lineHeight: '1.4' }}>
+            This repository is missing the GitHub Actions workflow file (<code>.github/workflows/auto-commit.yml</code>). 
+            Without it, daily background commits cannot be triggered automatically when your device is offline.
+          </p>
+          <button
+            onClick={handleInitialize}
+            className="btn btn-primary"
+            style={{ width: '100%', gap: '0.5rem', height: '2.5rem', fontSize: '0.8rem', background: 'linear-gradient(135deg, var(--accent-cyan), #0891b2)' }}
+            disabled={initializing}
+          >
+            {initializing ? (
+              <>
+                <Loader size={14} className="animate-spin" />
+                Configuring workflows and log files...
+              </>
+            ) : (
+              'Initialize Auto-Committer Workflow'
+            )}
+          </button>
+        </div>
+      )}
 
       {statusMessage && (
         <div className={`alert-banner ${statusMessage.toLowerCase().includes('failed') ? 'warning' : 'info'}`} style={{ margin: 0 }}>
@@ -243,7 +320,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           ) : statusMessage.includes('successfully') || statusMessage.includes('updated') ? (
             <CheckCircle size={16} style={{ color: 'var(--accent-green)', flexShrink: 0 }} />
           ) : (
-            <AlertCircle size={16} style={{ flexShrink: 0 }} />
+            <Danger2 size={16} style={{ flexShrink: 0 }} />
           )}
           <div>{statusMessage}</div>
         </div>
@@ -312,19 +389,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </form>
 
         {/* Daily Auto Committer Settings Toggle */}
-        <div className="status-row">
+        <div className="status-row" style={{ opacity: hasWorkflow ? 1 : 0.6 }}>
           <div>
             <span style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block' }}>Daily Background Booster</span>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              Automatically commit daily at randomized hours when you are away.
+              {hasWorkflow 
+                ? 'Automatically commit daily at randomized hours when you are away.'
+                : 'Please click "Initialize Auto-Committer Workflow" above to enable background boosting.'}
             </span>
           </div>
           <label className="toggle-switch">
             <input
               type="checkbox"
-              checked={isActive}
+              checked={isActive && hasWorkflow}
               onChange={handleToggle}
-              disabled={toggling || pushing || massRunning}
+              disabled={toggling || pushing || massRunning || !hasWorkflow}
             />
             <span className="toggle-slider"></span>
           </label>
@@ -334,7 +413,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* Mass Commit Booster Panel */}
       <div className="glass-panel">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
-          <Sparkles size={18} style={{ color: 'var(--accent-cyan)' }} />
+          <Flash2 size={18} style={{ color: 'var(--accent-cyan)' }} />
           <h3 style={{ margin: 0 }}>Mass Commit Booster</h3>
         </div>
         <p className="subtitle" style={{ margin: 0, marginBottom: '1rem' }}>
@@ -377,7 +456,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           {/* Turbo Mode Checkbox */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: '#1e1e1e', borderRadius: '8px', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem', background: '#181818', border: '1px solid rgba(255, 255, 255, 0.04)', borderRadius: '8px', marginBottom: '1rem' }}>
             <label className="toggle-switch">
               <input
                 type="checkbox"
@@ -403,7 +482,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <span>Pushed {massProgress} of {massLimit} commits</span>
                     <span>{Math.round((massProgress / massLimit) * 100)}%</span>
                   </div>
-                  <div className="progress-bar-container" style={{ width: '100%', height: '8px', background: '#1e1e1e', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div className="progress-bar-container" style={{ width: '100%', height: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', overflow: 'hidden' }}>
                     <div 
                       className="progress-bar-fill" 
                       style={{ 
@@ -416,7 +495,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                 </>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.75rem', background: '#1e1e1e', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.5rem 0.75rem', background: '#181818', border: '1px solid rgba(255, 255, 255, 0.04)', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   <Loader size={14} className="animate-spin" style={{ color: 'var(--accent-cyan)' }} />
                   <span>Generating commits locally and pushing in a single batch (this will take only a few seconds)...</span>
                 </div>
@@ -426,7 +505,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           {massError && (
             <div className="alert-banner warning" style={{ marginBottom: '1rem', marginTop: '0.5rem' }}>
-              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <Danger2 size={16} style={{ flexShrink: 0 }} />
               <div>{massError}</div>
             </div>
           )}
@@ -458,7 +537,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#fca5a5', width: '3.5rem', padding: 0 }}
                 title="Cancel booster process"
               >
-                <StopCircle size={18} />
+                <CloseCircle2 size={18} />
               </button>
             )}
           </div>
@@ -467,20 +546,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       {/* Real commits feed */}
       {commits.length > 0 && (
-        <div className="glass-panel" style={{ paddingBottom: '1rem' }}>
+        <div className="glass-panel" style={{ paddingBottom: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
             <h3 style={{ margin: 0 }}>Commits Made</h3>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Last 15 commits</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto' }}>
             {commits.map((item) => (
-              <div key={item.sha} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#1e1e1e', borderRadius: '8px', fontSize: '0.8rem' }}>
+              <div key={item.sha} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#161616', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '8px', fontSize: '0.8rem' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', overflow: 'hidden', marginRight: '0.5rem' }}>
                   <span style={{ color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {item.message}
                   </span>
                   <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
-                    by {item.author} • <code style={{ color: 'var(--accent-cyan)' }}>{item.sha.substring(0, 7)}</code>
+                    by {item.author} • <code style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono, monospace)' }}>{item.sha.substring(0, 7)}</code>
                   </span>
                 </div>
                 <a
@@ -490,7 +569,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   style={{ color: 'var(--text-secondary)', display: 'inline-flex', flexShrink: 0 }}
                   title="View commit on GitHub"
                 >
-                  <ExternalLink size={14} />
+                  <Link2 size={14} />
                 </a>
               </div>
             ))}

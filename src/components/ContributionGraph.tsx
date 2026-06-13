@@ -37,18 +37,10 @@ export const ContributionGraph: React.FC<ContributionGraphProps> = ({ contributi
 
   useEffect(() => {
     if (!calRef.current) return;
-    // Clean up old instance if exists
-    if (calInstance.current) {
-      try {
-        calInstance.current.destroy();
-      } catch (e) {
-        console.error(e);
-      }
-    }
+    let ignore = false;
 
-    if (calRef.current) {
-      calRef.current.innerHTML = '';
-    }
+    // Clear element synchronously before painting to ensure clean slate
+    calRef.current.innerHTML = '';
 
     const cal = new CalHeatmap();
     calInstance.current = cal;
@@ -89,9 +81,18 @@ export const ContributionGraph: React.FC<ContributionGraphProps> = ({ contributi
           domain: [1, 3, 6, 9],
         },
       },
+    }).then(() => {
+      if (ignore) {
+        try {
+          cal.destroy();
+        } catch (e) {
+          console.error(e);
+        }
+      }
     });
 
     return () => {
+      ignore = true;
       if (calInstance.current) {
         try {
           calInstance.current.destroy();
@@ -99,6 +100,9 @@ export const ContributionGraph: React.FC<ContributionGraphProps> = ({ contributi
         } catch (e) {
           console.error(e);
         }
+      }
+      if (calRef.current) {
+        calRef.current.innerHTML = '';
       }
     };
   }, [formattedData, startDate]);

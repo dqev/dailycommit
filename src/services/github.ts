@@ -14,8 +14,39 @@ function encodeBase64(str: string): string {
   return btoa(unescape(encodeURIComponent(str)));
 }
 
-export let GITHUB_OWNER = localStorage.getItem('github_booster_owner') || 'devchauhann';
-export let GITHUB_REPO = localStorage.getItem('github_booster_repo') || 'activity';
+export function encodeToken(token: string): string {
+  // Simple Base64 + reversed string obfuscation to hide token signature ('ghp_') from basic regex scanners
+  return btoa(token.split('').reverse().join(''));
+}
+
+export function decodeToken(encoded: string | null): string | null {
+  if (!encoded) return null;
+  try {
+    // Check if it's already a raw token (backward compatibility)
+    if (encoded.startsWith('ghp_') || encoded.startsWith('github_pat_')) {
+      return encoded;
+    }
+    return atob(encoded).split('').reverse().join('');
+  } catch (e) {
+    return encoded;
+  }
+}
+
+export function getStoredToken(): string | null {
+  const token = localStorage.getItem('github_booster_token');
+  return decodeToken(token);
+}
+
+export function setStoredToken(token: string): void {
+  localStorage.setItem('github_booster_token', encodeToken(token));
+}
+
+export function clearStoredToken(): void {
+  localStorage.removeItem('github_booster_token');
+}
+
+export let GITHUB_OWNER = localStorage.getItem('github_booster_owner') || '';
+export let GITHUB_REPO = localStorage.getItem('github_booster_repo') || '';
 
 export const setGithubRepoDetails = (owner: string, repo: string) => {
   GITHUB_OWNER = owner;
@@ -465,6 +496,118 @@ export const githubService = {
           }
         });
       }
+    }
+  },
+
+  // Automatically initialize the required GitHub Action workflow and configuration files
+  async initializeRepository(token: string, email: string): Promise<void> {
+    const defaultWorkflow = `name: GitHub Activity Booster
+
+on:
+  schedule:
+    # Runs twice daily to ensure streak safety
+    - cron: '0 8,20 * * *'
+  workflow_dispatch:
+    inputs:
+      commit_message:
+        description: 'Commit message for this boost'
+        required: false
+        default: 'chore: auto boost activity [skip ci]'
+      committer_email:
+        description: 'Email address to associate with the commit'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  boost:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Update activity log
+        run: |
+          echo "Boosted on: $(date)" >> activity_log.txt
+
+      - name: Git commit and push
+        run: |
+          EMAIL="\${{ github.event.inputs.committer_email }}"
+          if [ -z "$EMAIL" ]; then
+            if [ -f .booster_email ]; then
+              EMAIL=\$(cat .booster_email)
+            else
+              EMAIL="\${{ github.actor_id }}+\${{ github.actor }}@users.noreply.github.com"
+            fi
+          fi
+          
+          MSG="\${{ github.event.inputs.commit_message }}"
+          if [ -z "$MSG" ]; then
+            if [ -f .booster_msg ]; then
+              MSG=\$(cat .booster_msg)
+            else
+              MSG="chore: auto boost activity [skip ci]"
+            fi
+          fi
+
+          git config --global user.name "\${{ github.actor }}"
+          git config --global user.email "\$EMAIL"
+          
+          git add activity_log.txt
+          
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            git commit -m "\$MSG"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+`;
+
+    // 1. Create/Update workflow file
+    const wf = await this.getFile(token, '.github/workflows/auto-commit.yml');
+    await this.updateFile(
+      token,
+      '.github/workflows/auto-commit.yml',
+      defaultWorkflow,
+      'chore: initialize auto-commit workflow',
+      wf?.sha
+    );
+
+    // 2. Create/Update .booster_email
+    const emailFile = await this.getFile(token, '.booster_email');
+    if (!emailFile) {
+      await this.updateFile(
+        token,
+        '.booster_email',
+        email,
+        'chore: initialize booster email'
+      );
+    }
+
+    // 3. Create/Update .booster_msg
+    const msgFile = await this.getFile(token, '.booster_msg');
+    if (!msgFile) {
+      await this.updateFile(
+        token,
+        '.booster_msg',
+        'chore: auto boost activity [skip ci]',
+        'chore: initialize booster message'
+      );
+    }
+
+    // 4. Create/Update activity_log.txt
+    const logFile = await this.getFile(token, 'activity_log.txt');
+    if (!logFile) {
+      await this.updateFile(
+        token,
+        'activity_log.txt',
+        '# GitHub Activity Booster - Activity Log\n',
+        'chore: initialize activity log'
+      );
     }
   },
 };

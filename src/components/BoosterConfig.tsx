@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, MessageSquare, Clock, Save, Loader, Check } from 'lucide-react';
+import { Envelope, MessageSquare2, Clock, Save22, Loader, Check } from 'reicon-react';
 import type { BoosterConfig as ConfigType } from '../types';
 
 interface BoosterConfigProps {
@@ -13,6 +13,8 @@ const CRON_PRESETS = [
   { label: 'Midday (12:00 UTC / 17:30 IST)', value: '0 12 * * *' },
   { label: 'Evening (18:00 UTC / 23:30 IST)', value: '0 18 * * *' },
   { label: 'Night (22:00 UTC / 03:30 IST)', value: '0 22 * * *' },
+  { label: 'Streak Safe (Twice daily - 08:00 & 20:00 UTC)', value: '0 8,20 * * *' },
+  { label: 'Streak Bulletproof (Every 6 hours)', value: '0 */6 * * *' },
   { label: 'Custom Cron Expression...', value: 'custom' },
 ];
 
@@ -68,7 +70,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
             GitHub Commit Email
           </label>
           <div style={{ position: 'relative' }}>
-            <Mail size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <Envelope size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             <input
               id="email-input"
               type="email"
@@ -92,7 +94,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
             Commit Message
           </label>
           <div style={{ position: 'relative' }}>
-            <MessageSquare size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <MessageSquare2 size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
             <input
               id="msg-input"
               type="text"
@@ -165,7 +167,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
             </>
           ) : (
             <>
-              <Save size={16} />
+              <Save22 size={16} />
               Save Settings
             </>
           )}
