@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { Play, Refresh, Link2, CheckCircle, Danger2, Loader, Flash2, CloseCircle2 } from 'reicon-react';
-import type { GitHubUser, GitCommit } from '../types';
+import type { GitHubUser, GitCommit, BoosterConfig as ConfigType } from '../types';
 import { githubService } from '../services/github';
+import { BoosterConfig } from './BoosterConfig';
 import confetti from 'canvas-confetti';
 
 interface DashboardProps {
@@ -15,6 +16,9 @@ interface DashboardProps {
   repoName: string;
   hasWorkflow: boolean;
   onInitialize: () => Promise<void>;
+  config: ConfigType;
+  onSaveConfig: (c: ConfigType) => Promise<void>;
+  configSaving: boolean;
 }
 
 const PREBUILT_MESSAGES = [
@@ -36,6 +40,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   repoName,
   hasWorkflow,
   onInitialize,
+  config,
+  onSaveConfig,
+  configSaving,
 }) => {
   const [commitMessage, setCommitMessage] = useState(PREBUILT_MESSAGES[0]);
   const [pushing, setPushing] = useState(false);
@@ -298,7 +305,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <button
             onClick={handleInitialize}
             className="btn btn-primary"
-            style={{ width: '100%', gap: '0.5rem', height: '2.5rem', fontSize: '0.8rem', background: 'linear-gradient(135deg, var(--accent-cyan), #0891b2)' }}
+            style={{ width: '100%', gap: '0.5rem', height: '2.5rem', fontSize: '0.8rem', background: 'var(--accent-cyan)', color: '#0d1117' }}
             disabled={initializing}
           >
             {initializing ? (
@@ -410,6 +417,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
+      {/* Schedule Configuration */}
+      <BoosterConfig
+        config={config}
+        onSave={onSaveConfig}
+        loading={configSaving}
+      />
+
       {/* Mass Commit Booster Panel */}
       <div className="glass-panel">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
@@ -488,7 +502,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       style={{ 
                         width: `${(massProgress / massLimit) * 100}%`, 
                         height: '100%', 
-                        background: 'linear-gradient(90deg, var(--accent-cyan), var(--accent-green))',
+                        background: 'var(--accent-green)',
                         transition: 'width 0.15s ease' 
                       }} 
                     />

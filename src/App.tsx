@@ -4,7 +4,7 @@ import { GitHubConnect } from './components/GitHubConnect';
 import { Dashboard } from './components/Dashboard';
 import { ContributionGraph } from './components/ContributionGraph';
 import { githubService, setGithubRepoDetails, getStoredToken, setStoredToken, clearStoredToken } from './services/github';
-import type { GitHubUser, GitCommit, ContributionCalendar } from './types';
+import type { GitHubUser, GitCommit, ContributionCalendar, BoosterConfig as ConfigType } from './types';
 
 function App() {
   const [token, setToken] = useState<string | null>(null);
@@ -13,6 +13,12 @@ function App() {
   const [contributions, setContributions] = useState<ContributionCalendar | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [hasWorkflow, setHasWorkflow] = useState<boolean>(true);
+  const [boosterConfig, setBoosterConfig] = useState<ConfigType>({
+    email: '',
+    message: 'chore: update booster activity',
+    cron: '30 8 * * *',
+  });
+  const [configSaving, setConfigSaving] = useState(false);
   
   const [repoOwner, setRepoOwner] = useState(() => localStorage.getItem('github_booster_owner') || '');
   const [repoName, setRepoName] = useState(() => localStorage.getItem('github_booster_repo') || '');
@@ -90,15 +96,17 @@ function App() {
       const hasWf = workflowFile !== null;
       setHasWorkflow(hasWf);
 
-      const [commitsData, workflowStatus, contributionsData] = await Promise.all([
+      const [commitsData, workflowStatus, contributionsData, configData] = await Promise.all([
         githubService.getRepoCommits(authToken),
         hasWf ? githubService.getWorkflowStatus(authToken) : Promise.resolve(false),
         githubService.getRealContributions(authToken),
+        githubService.getConfig(authToken).catch(() => null),
       ]);
 
       setCommits(commitsData);
       setIsActive(workflowStatus);
       setContributions(contributionsData);
+      if (configData) setBoosterConfig(configData);
     } catch (err: any) {
       console.error('Failed to load dashboard data:', err);
       // Fallback
@@ -143,6 +151,17 @@ function App() {
     const email = user.email || `${user.login}@users.noreply.github.com`;
     await githubService.initializeRepository(token, email);
     await fetchBoosterData(token);
+  };
+
+  const handleSaveConfig = async (newConfig: ConfigType) => {
+    if (!token) return;
+    setConfigSaving(true);
+    try {
+      await githubService.saveConfig(token, newConfig);
+      setBoosterConfig(newConfig);
+    } finally {
+      setConfigSaving(false);
+    }
   };
 
   if (loading) {
@@ -247,6 +266,9 @@ function App() {
               repoName={repoName}
               hasWorkflow={hasWorkflow}
               onInitialize={handleInitializeRepository}
+              config={boosterConfig}
+              onSaveConfig={handleSaveConfig}
+              configSaving={configSaving}
             />
             {contributions && <ContributionGraph contributions={contributions} />}
           </div>

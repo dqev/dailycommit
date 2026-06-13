@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Envelope, MessageSquare2, Clock, Save22, Loader, Check } from 'reicon-react';
+import { Envelope, MessageSquare2, Clock, Save22, Loader, Check, Calendar, Flash2, TerminalCircle } from 'reicon-react';
 import type { BoosterConfig as ConfigType } from '../types';
 
 interface BoosterConfigProps {
@@ -8,15 +8,43 @@ interface BoosterConfigProps {
   loading: boolean;
 }
 
+type ScheduleMode = 'preset' | 'timepicker' | 'custom';
+
 const CRON_PRESETS = [
   { label: 'Morning (08:30 UTC / 14:00 IST)', value: '30 8 * * *' },
   { label: 'Midday (12:00 UTC / 17:30 IST)', value: '0 12 * * *' },
   { label: 'Evening (18:00 UTC / 23:30 IST)', value: '0 18 * * *' },
   { label: 'Night (22:00 UTC / 03:30 IST)', value: '0 22 * * *' },
-  { label: 'Streak Safe (Twice daily - 08:00 & 20:00 UTC)', value: '0 8,20 * * *' },
-  { label: 'Streak Bulletproof (Every 6 hours)', value: '0 */6 * * *' },
-  { label: 'Custom Cron Expression...', value: 'custom' },
+  { label: 'Streak Safe — Twice daily (08:00 & 20:00 UTC)', value: '0 8,20 * * *' },
+  { label: 'Streak Bulletproof — Every 6 hours', value: '0 */6 * * *' },
 ];
+
+// Convert cron to time picker values (only for simple "M H * * *" patterns)
+function cronToTimePicker(cron: string): { hour: number; minute: number } | null {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [min, hr, dom, mon, dow] = parts;
+  if (dom !== '*' || mon !== '*' || dow !== '*') return null;
+  const h = parseInt(hr, 10);
+  const m = parseInt(min, 10);
+  if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return { hour: h, minute: m };
+}
+
+function timePickerToCron(hour: number, minute: number): string {
+  return `${minute} ${hour} * * *`;
+}
+
+// Format UTC hour to IST for display
+function utcToIstLabel(hourUtc: number, minuteUtc: number): string {
+  const totalMinutes = hourUtc * 60 + minuteUtc + 330; // IST = UTC+5:30
+  const istH = Math.floor((totalMinutes % 1440) / 60);
+  const istM = totalMinutes % 60;
+  const period = istH >= 12 ? 'PM' : 'AM';
+  const displayH = istH % 12 === 0 ? 12 : istH % 12;
+  const displayM = String(istM).padStart(2, '0');
+  return `${displayH}:${displayM} ${period} IST`;
+}
 
 export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, loading }) => {
   const [email, setEmail] = useState(config.email);
@@ -24,8 +52,11 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
   const [cron, setCron] = useState(config.cron);
   const [preset, setPreset] = useState('custom');
   const [saved, setSaved] = useState(false);
+  const [mode, setMode] = useState<ScheduleMode>('preset');
+  const [pickerHour, setPickerHour] = useState(8);
+  const [pickerMinute, setPickerMinute] = useState(0);
 
-  // Match initial config to preset
+  // Match initial config to mode
   useEffect(() => {
     setEmail(config.email);
     setMessage(config.message);
@@ -34,15 +65,40 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
     const matchedPreset = CRON_PRESETS.find((p) => p.value === config.cron);
     if (matchedPreset) {
       setPreset(matchedPreset.value);
+      setMode('preset');
     } else {
+      const parsed = cronToTimePicker(config.cron);
+      if (parsed) {
+        setPickerHour(parsed.hour);
+        setPickerMinute(parsed.minute);
+        setMode('timepicker');
+      } else {
+        setMode('custom');
+      }
       setPreset('custom');
     }
   }, [config]);
 
+  // Keep cron in sync with time picker
+  useEffect(() => {
+    if (mode === 'timepicker') {
+      setCron(timePickerToCron(pickerHour, pickerMinute));
+    }
+  }, [mode, pickerHour, pickerMinute]);
+
   const handlePresetChange = (val: string) => {
     setPreset(val);
-    if (val !== 'custom') {
-      setCron(val);
+    setCron(val);
+  };
+
+  const handleModeChange = (newMode: ScheduleMode) => {
+    setMode(newMode);
+    if (newMode === 'preset') {
+      const first = CRON_PRESETS[0];
+      setPreset(first.value);
+      setCron(first.value);
+    } else if (newMode === 'timepicker') {
+      setCron(timePickerToCron(pickerHour, pickerMinute));
     }
   };
 
@@ -55,8 +111,11 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
       cron: cron.trim(),
     });
     setSaved(true);
-    setTimeout(() => setSaved(false), 3000); // Reset saved indicator
+    setTimeout(() => setSaved(false), 3000);
   };
+
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const minutes = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
   return (
     <div className="glass-panel">
@@ -78,7 +137,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
-              placeholder="e.g. dev@example.com"
+              placeholder="e.g. email@example.com"
               style={{ paddingLeft: '2.5rem' }}
               required
             />
@@ -111,40 +170,186 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
 
         {/* Schedule */}
         <div className="form-group">
-          <label className="form-label" htmlFor="preset-select">
-            Daily Trigger Schedule
-          </label>
-          <div style={{ position: 'relative', marginBottom: preset === 'custom' ? '0.75rem' : '0' }}>
-            <Clock size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-            <select
-              id="preset-select"
-              className="form-input"
-              value={preset}
-              onChange={(e) => handlePresetChange(e.target.value)}
-              disabled={loading}
-              style={{ paddingLeft: '2.5rem', appearance: 'none', background: 'rgba(0,0,0,0.3) url("data:image/svg+xml;utf8,<svg fill=\'%2394a3b8\' height=\'24\' viewBox=\'0 0 24 24\' width=\'24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M7 10l5 5 5-5z\'/></svg>") no-repeat right 12px center' }}
-            >
-              {CRON_PRESETS.map((p) => (
-                <option key={p.value} value={p.value} style={{ background: '#18181b' }}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+          <label className="form-label">Daily Trigger Schedule</label>
+
+          {/* Mode Tabs */}
+          <div style={{
+            display: 'flex',
+            gap: '0.375rem',
+            marginBottom: '0.875rem',
+            background: 'rgba(0,0,0,0.25)',
+            borderRadius: '10px',
+            padding: '4px',
+            border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            {(['preset', 'timepicker', 'custom'] as ScheduleMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => handleModeChange(m)}
+                disabled={loading}
+                style={{
+                  flex: 1,
+                  padding: '0.4rem 0.5rem',
+                  borderRadius: '7px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.01em',
+                  transition: 'all 0.2s ease',
+                  background: mode === m
+                    ? 'var(--accent-green)'
+                    : 'transparent',
+                  color: mode === m ? '#0d1117' : 'var(--text-muted)',
+                  boxShadow: mode === m ? '0 2px 8px rgba(16,185,129,0.25)' : 'none',
+                }}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
+                  {m === 'preset' ? <Flash2 size={13} /> : m === 'timepicker' ? <Clock size={13} /> : <TerminalCircle size={13} />}
+                  {m === 'preset' ? 'Presets' : m === 'timepicker' ? 'Pick Time' : 'Custom'}
+                </span>
+              </button>
+            ))}
           </div>
 
-          {preset === 'custom' && (
-            <input
-              type="text"
-              className="form-input"
-              value={cron}
-              onChange={(e) => setCron(e.target.value)}
-              disabled={loading}
-              placeholder="e.g. 30 8 * * *"
-              required
-            />
+          {/* Preset Mode */}
+          {mode === 'preset' && (
+            <div style={{ position: 'relative' }}>
+              <Clock size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', zIndex: 1 }} />
+              <select
+                id="preset-select"
+                className="form-input"
+                value={preset}
+                onChange={(e) => handlePresetChange(e.target.value)}
+                disabled={loading}
+                style={{
+                  paddingLeft: '2.5rem',
+                  appearance: 'none',
+                  background: 'rgba(0,0,0,0.3) url("data:image/svg+xml;utf8,<svg fill=\'%2394a3b8\' height=\'24\' viewBox=\'0 0 24 24\' width=\'24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M7 10l5 5 5-5z\'/></svg>") no-repeat right 12px center',
+                }}
+              >
+                {CRON_PRESETS.map((p) => (
+                  <option key={p.value} value={p.value} style={{ background: '#18181b' }}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>
-            GitHub Actions cron jobs use UTC time. Auto-commits may trigger within a 15-minute window.
+
+          {/* Time Picker Mode */}
+          {mode === 'timepicker' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                {/* Hour */}
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: '0.375rem' }}>
+                    Hour (UTC)
+                  </span>
+                  <select
+                    className="form-input"
+                    value={pickerHour}
+                    onChange={(e) => setPickerHour(Number(e.target.value))}
+                    disabled={loading}
+                    style={{
+                      appearance: 'none',
+                      background: 'rgba(0,0,0,0.3) url("data:image/svg+xml;utf8,<svg fill=\'%2394a3b8\' height=\'24\' viewBox=\'0 0 24 24\' width=\'24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M7 10l5 5 5-5z\'/></svg>") no-repeat right 10px center',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {hours.map((h) => (
+                      <option key={h} value={h} style={{ background: '#18181b' }}>
+                        {String(h).padStart(2, '0')}:00
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Colon divider */}
+                <span style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-muted)', marginTop: '1.25rem' }}>:</span>
+
+                {/* Minute */}
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: '0.375rem' }}>
+                    Minute (UTC)
+                  </span>
+                  <select
+                    className="form-input"
+                    value={pickerMinute}
+                    onChange={(e) => setPickerMinute(Number(e.target.value))}
+                    disabled={loading}
+                    style={{
+                      appearance: 'none',
+                      background: 'rgba(0,0,0,0.3) url("data:image/svg+xml;utf8,<svg fill=\'%2394a3b8\' height=\'24\' viewBox=\'0 0 24 24\' width=\'24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M7 10l5 5 5-5z\'/></svg>") no-repeat right 10px center',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {minutes.map((m) => (
+                      <option key={m} value={m} style={{ background: '#18181b' }}>
+                        :{String(m).padStart(2, '0')}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.625rem',
+                padding: '0.6rem 0.875rem',
+                borderRadius: '8px',
+                background: 'rgba(6,182,212,0.06)',
+                border: '1px solid rgba(6,182,212,0.15)',
+              }}>
+                <Calendar size={14} style={{ color: 'var(--accent-cyan)', flexShrink: 0 }} />
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Commits daily at{' '}
+                  <strong style={{ color: '#fff' }}>
+                    {String(pickerHour).padStart(2, '0')}:{String(pickerMinute).padStart(2, '0')} UTC
+                  </strong>
+                  {' '}→{' '}
+                  <strong style={{ color: 'var(--accent-cyan)' }}>
+                    {utcToIstLabel(pickerHour, pickerMinute)}
+                  </strong>
+                </span>
+                <code style={{
+                  marginLeft: 'auto',
+                  fontSize: '0.72rem',
+                  fontFamily: 'monospace',
+                  color: 'var(--accent-green)',
+                  background: 'rgba(0,0,0,0.3)',
+                  padding: '2px 7px',
+                  borderRadius: '5px',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {cron}
+                </code>
+              </div>
+            </div>
+          )}
+
+          {/* Custom Mode */}
+          {mode === 'custom' && (
+            <div style={{ position: 'relative' }}>
+              <Clock size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                className="form-input"
+                value={cron}
+                onChange={(e) => setCron(e.target.value)}
+                disabled={loading}
+                placeholder="e.g. 30 8 * * * (min hour * * *)"
+                style={{ paddingLeft: '2.5rem', fontFamily: 'monospace', letterSpacing: '0.05em' }}
+                required
+              />
+            </div>
+          )}
+
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem', display: 'block' }}>
+            All times are in <strong style={{ color: 'var(--text-secondary)' }}>UTC</strong>. GitHub Actions cron jobs may run within a ±15 min window.
           </span>
         </div>
 
@@ -152,7 +357,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
         <button
           type="submit"
           className="btn btn-primary"
-          style={{ width: '100%', gap: '0.5rem', background: saved ? 'var(--accent-green)' : 'linear-gradient(135deg, var(--primary), #6d28d9)' }}
+          style={{ width: '100%', gap: '0.5rem', background: saved ? 'var(--accent-green)' : 'var(--primary)', color: saved ? '#fff' : 'var(--primary-text)' }}
           disabled={loading}
         >
           {loading ? (
