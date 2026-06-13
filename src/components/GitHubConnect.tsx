@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Loader, HelpCircle, ChevronDown, ChevronUp, Key, TerminalCircle, Lock } from 'reicon-react';
 import { githubService } from '../services/github';
-import { GithubIcon } from './GithubIcon';
 import type { GitHubUser } from '../types';
 
 interface GitHubConnectProps {

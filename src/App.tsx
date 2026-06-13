@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Logout, Loader, Danger2, ArrowRight, Clock, Flash2, Shield, Calendar, ChevronLeft } from 'reicon-react';
+import { Logout, Loader, Danger2, ArrowRight, Clock, Shield, ChevronLeft } from 'reicon-react';
 import { GitHubConnect } from './components/GitHubConnect';
 import { Dashboard } from './components/Dashboard';
 import { ContributionGraph } from './components/ContributionGraph';
