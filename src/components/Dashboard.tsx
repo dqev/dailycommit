@@ -293,25 +293,44 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {!hasWorkflow && (
-        <div className="glass-panel" style={{ borderLeft: '3px solid var(--accent-cyan)', background: 'rgba(6, 182, 212, 0.03)', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Danger2 size={16} style={{ color: 'var(--accent-cyan)' }} />
-            <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Auto-Committer Not Configured</h3>
+        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.875rem' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '36px',
+              height: '36px',
+              borderRadius: '10px',
+              background: '#181818',
+              border: '1px solid rgba(255,255,255,0.05)',
+              flexShrink: 0,
+            }}>
+              <Danger2 size={16} style={{ color: 'var(--text-secondary)' }} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 500, marginBottom: '0.3rem' }}>
+                Auto-Committer Not Configured
+              </h3>
+              <p className="subtitle" style={{ fontSize: '0.8rem', margin: 0, lineHeight: '1.5' }}>
+                This repository is missing the GitHub Actions workflow file{' '}
+                <code style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', background: '#181818', padding: '1px 5px', borderRadius: '4px' }}>
+                  .github/workflows/auto-commit.yml
+                </code>
+                . Without it, daily background commits cannot run automatically when your device is offline.
+              </p>
+            </div>
           </div>
-          <p className="subtitle" style={{ fontSize: '0.75rem', margin: 0, lineHeight: '1.4' }}>
-            This repository is missing the GitHub Actions workflow file (<code>.github/workflows/auto-commit.yml</code>). 
-            Without it, daily background commits cannot be triggered automatically when your device is offline.
-          </p>
           <button
             onClick={handleInitialize}
             className="btn btn-primary"
-            style={{ width: '100%', gap: '0.5rem', height: '2.5rem', fontSize: '0.8rem', background: 'var(--accent-cyan)', color: '#0d1117' }}
+            style={{ width: '100%', gap: '0.5rem', height: '2.75rem', fontSize: '0.85rem' }}
             disabled={initializing}
           >
             {initializing ? (
               <>
-                <Loader size={14} className="animate-spin" />
-                Configuring workflows and log files...
+                <Loader size={15} className="animate-spin" />
+                Configuring workflow and files...
               </>
             ) : (
               'Initialize Auto-Committer Workflow'
