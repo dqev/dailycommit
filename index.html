@@ -1,11 +1,261 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" prefix="og: https://ogp.me/ns#">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/github.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="GitHub Activity Booster - Automatically commit and boost your contribution heatmap calendar directly from your phone. Secure, serverless, and customizable." />
-    <title>GitHub Activity Booster | Heatmap manager</title>
+
+    <!-- ─── Primary SEO ───────────────────────────────────────────────── -->
+    <title>Daily Commit — Keep Your GitHub Streak Alive Automatically</title>
+    <meta name="description" content="Daily Commit automates your GitHub contribution streak using GitHub Actions. Stay green on your heatmap even when you're away — secure, serverless, and zero-backend." />
+    <meta name="keywords" content="github streak, keep github streak alive, github contribution heatmap, auto commit github, daily commit, github actions automation, github streak bot, automatic github commits, github green squares, github heatmap filler, github contribution graph, maintain github streak, github activity automation, streak keeper, daily github commit tool, github commit scheduler, github commit automation tool, github actions cron, github workflow automation, developer tools, open source tools, github productivity" />
+    <meta name="author" content="dqev" />
+    <meta name="creator" content="dqev" />
+    <meta name="publisher" content="Daily Commit" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow" />
+    <meta name="rating" content="general" />
+    <meta name="revisit-after" content="7 days" />
+    <meta name="language" content="English" />
+    <meta name="category" content="Developer Tools" />
+    <link rel="canonical" href="https://dailycommit.vercel.app/" />
+
+    <!-- ─── Favicons & PWA ────────────────────────────────────────────── -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/github.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/github.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/github.png" />
+    <link rel="apple-touch-icon-precomposed" href="/github.png" />
+    <link rel="shortcut icon" href="/github.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta name="msapplication-TileColor" content="#0d1117" />
+    <meta name="msapplication-TileImage" content="/github.png" />
+    <meta name="msapplication-navbutton-color" content="#0d1117" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Daily Commit" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Daily Commit" />
+
+    <!-- ─── Open Graph ────────────────────────────────────────────────── -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Daily Commit" />
+    <meta property="og:url" content="https://dailycommit.vercel.app/" />
+    <meta property="og:title" content="Daily Commit — Keep Your GitHub Streak Alive Automatically" />
+    <meta property="og:description" content="Automate your GitHub daily commits with GitHub Actions. No backend, no stored credentials — just green squares, every day." />
+    <meta property="og:image" content="https://dailycommit.vercel.app/og-image.png" />
+    <meta property="og:image:secure_url" content="https://dailycommit.vercel.app/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="Daily Commit – GitHub Streak Automation Dashboard" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- ─── Twitter / X Card ─────────────────────────────────────────── -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@dqev" />
+    <meta name="twitter:creator" content="@dqev" />
+    <meta name="twitter:title" content="Daily Commit — Keep Your GitHub Streak Alive Automatically" />
+    <meta name="twitter:description" content="Automate your GitHub daily commits with GitHub Actions. No backend, no stored credentials — just green squares, every day." />
+    <meta name="twitter:image" content="https://dailycommit.vercel.app/og-image.png" />
+    <meta name="twitter:image:alt" content="Daily Commit Dashboard Preview" />
+    <meta name="twitter:domain" content="dailycommit.vercel.app" />
+    <meta name="twitter:url" content="https://dailycommit.vercel.app/" />
+
+    <!-- ─── Geo / Language ────────────────────────────────────────────── -->
+    <meta name="geo.region" content="US" />
+    <meta name="geo.placename" content="United States" />
+    <link rel="alternate" hreflang="en" href="https://dailycommit.vercel.app/" />
+    <link rel="alternate" hreflang="x-default" href="https://dailycommit.vercel.app/" />
+
+    <!-- ─── Preconnect ────────────────────────────────────────────────── -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.github.com" />
+    <link rel="dns-prefetch" href="https://api.github.com" />
+
+    <!-- ─── JSON-LD: WebSite + SearchAction ─────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Daily Commit",
+      "alternateName": ["DailyCommit", "GitHub Streak Keeper", "Auto Commit GitHub"],
+      "url": "https://dailycommit.vercel.app/",
+      "description": "Automate your GitHub daily commits to maintain your contribution streak using GitHub Actions.",
+      "inLanguage": "en-US",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "https://dailycommit.vercel.app/?q={search_term_string}"
+        },
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+
+    <!-- ─── JSON-LD: SoftwareApplication ─────────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Daily Commit",
+      "alternateName": "GitHub Streak Keeper",
+      "url": "https://dailycommit.vercel.app/",
+      "description": "Automate your GitHub daily commits using GitHub Actions to maintain your contribution streak — secure, serverless, and zero-backend. No server or credentials stored remotely.",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Productivity",
+      "operatingSystem": "All",
+      "browserRequirements": "Requires JavaScript",
+      "softwareVersion": "1.0.0",
+      "releaseNotes": "Initial public release with GitHub Actions integration, mass boost engine, and streak bulletproof mode.",
+      "screenshot": "https://dailycommit.vercel.app/og-image.png",
+      "thumbnailUrl": "https://dailycommit.vercel.app/github.png",
+      "image": "https://dailycommit.vercel.app/og-image.png",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock"
+      },
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "5",
+        "ratingCount": "1",
+        "bestRating": "5",
+        "worstRating": "1"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "dqev",
+        "url": "https://github.com/dqev"
+      },
+      "creator": {
+        "@type": "Person",
+        "name": "dqev",
+        "url": "https://github.com/dqev"
+      },
+      "featureList": [
+        "GitHub Actions automation",
+        "Daily commit scheduler with cron support",
+        "Live GitHub contribution heatmap viewer",
+        "Streak bulletproof mode (every 6 hours)",
+        "Mass boost engine (up to 100,000 commits)",
+        "Zero-backend, no credentials stored remotely",
+        "One-click repository initialization",
+        "Custom commit messages and email",
+        "Token obfuscation in localStorage",
+        "Automatic git remote URL restoration"
+      ],
+      "keywords": "github streak, auto commit, github actions, daily commit, heatmap, contribution graph"
+    }
+    </script>
+
+    <!-- ─── JSON-LD: Organization ─────────────────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Daily Commit",
+      "url": "https://dailycommit.vercel.app/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://dailycommit.vercel.app/github.png",
+        "width": 512,
+        "height": 512
+      },
+      "image": "https://dailycommit.vercel.app/og-image.png",
+      "description": "Daily Commit automates GitHub contribution streaks using GitHub Actions.",
+      "sameAs": [
+        "https://github.com/dqev/dailycommit"
+      ],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "technical support",
+        "url": "https://github.com/dqev/dailycommit/issues"
+      }
+    }
+    </script>
+
+    <!-- ─── JSON-LD: FAQPage ───────────────────────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is Daily Commit safe to use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Daily Commit never sends your GitHub token to any external server. Your Personal Access Token is stored only in your browser's localStorage using Base64 obfuscation, and API calls go directly from your browser to api.github.com. The GitHub Actions workflow uses GitHub's built-in temporary GITHUB_TOKEN, not your PAT."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does Daily Commit keep my GitHub streak alive?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Daily Commit sets up a GitHub Actions workflow in your connected repository. This workflow runs on a cron schedule you configure (e.g. daily, twice daily, or every 6 hours) and appends a timestamped line to an activity file, then pushes a commit — keeping your contribution heatmap green automatically."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Daily Commit require a backend or server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Daily Commit is fully serverless. The dashboard runs entirely in your browser. Commit scheduling is handled by GitHub Actions running in the cloud inside your own repository. No credentials or data are ever sent to a third-party server."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What GitHub permissions does Daily Commit need?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Daily Commit requires a GitHub Personal Access Token (PAT) with the 'repo' scope (to commit and push to your repository) and the 'workflow' scope (to create and update GitHub Actions workflows). You can generate a classic PAT from GitHub Settings → Developer Settings → Personal Access Tokens."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is the Mass Boost Engine?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The Mass Boost Engine lets you push between 1 and 100,000 commits to your repository instantly. This is useful if you want to fill in past dates on your GitHub contribution heatmap. When used locally, commits are created via git directly and pushed in a single batch for maximum speed."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What is Streak Bulletproof mode?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Streak Bulletproof mode schedules the auto-commit GitHub Action to run every 6 hours (0 */6 * * *). GitHub Actions cron jobs can be delayed by 15–60 minutes during high queue traffic. Running every 6 hours guarantees at least one commit lands within the same calendar day, no matter the queue delay."
+          }
+        }
+      ]
+    }
+    </script>
+
+    <!-- ─── JSON-LD: BreadcrumbList ───────────────────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://dailycommit.vercel.app/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Dashboard",
+          "item": "https://dailycommit.vercel.app/dashboard"
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>

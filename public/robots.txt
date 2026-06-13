@@ -1,0 +1,14 @@
+# Daily Commit – robots.txt
+# https://dailycommit.vercel.app/
+
+# Allow all crawlers full access
+User-agent: *
+Allow: /
+
+# Block crawlers from accessing source maps and build artifacts
+Disallow: /src/
+Disallow: /*.map$
+Disallow: /node_modules/
+
+# Sitemap location
+Sitemap: https://dailycommit.vercel.app/sitemap.xml
