@@ -22,7 +22,50 @@ export default defineConfig({
       name: 'bulk-commit-api',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          if (req.url?.startsWith('/api/bulk-commit') && req.method === 'POST') {
+          if (req.url?.startsWith('/api/save-config') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk;
+            });
+            req.on('end', () => {
+              try {
+                const { email, message, cron } = JSON.parse(body);
+
+                // Update local .booster_email
+                const emailFile = path.join(process.cwd(), '.booster_email');
+                fs.writeFileSync(emailFile, email);
+
+                // Update local .booster_msg
+                const msgFile = path.join(process.cwd(), '.booster_msg');
+                fs.writeFileSync(msgFile, message);
+
+                // Update local auto-commit.yml
+                const workflowFile = path.join(process.cwd(), '.github/workflows/auto-commit.yml');
+                if (fs.existsSync(workflowFile)) {
+                  let content = fs.readFileSync(workflowFile, 'utf8');
+                  const cronRegex = /(-\s*cron:\s*['"])([^'"]+)(['"])/;
+                  if (cronRegex.test(content)) {
+                    content = content.replace(cronRegex, `$1${cron}$3`);
+                  } else {
+                    const scheduleIndex = content.indexOf('schedule:');
+                    if (scheduleIndex !== -1) {
+                      const before = content.substring(0, scheduleIndex + 9);
+                      const after = content.substring(scheduleIndex + 9);
+                      content = `${before}\n    - cron: '${cron}'${after}`;
+                    }
+                  }
+                  fs.writeFileSync(workflowFile, content);
+                }
+
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: true }));
+              } catch (error: any) {
+                console.error('[save-config-api] Error:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
+              }
+            });
+          } else if (req.url?.startsWith('/api/bulk-commit') && req.method === 'POST') {
             let body = '';
             req.on('data', (chunk) => {
               body += chunk;

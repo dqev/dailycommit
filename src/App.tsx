@@ -262,7 +262,23 @@ function App() {
     if (!token) return;
     setConfigSaving(true);
     try {
+      // 1. Save to GitHub remote repository
       await githubService.saveConfig(token, newConfig);
+      
+      // 2. If running locally, sync configuration to local disk files
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalhost) {
+        try {
+          await fetch('/api/save-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newConfig),
+          });
+        } catch (localErr) {
+          console.warn('Failed to sync config to local disk:', localErr);
+        }
+      }
+
       setBoosterConfig(newConfig);
       localStorage.setItem('github_booster_config', JSON.stringify(newConfig));
     } finally {
