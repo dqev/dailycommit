@@ -8,15 +8,16 @@ interface BoosterConfigProps {
   loading: boolean;
 }
 
-type ScheduleMode = 'preset' | 'timepicker' | 'custom';
+type ScheduleMode = 'preset' | 'timepicker' | 'frequency' | 'custom';
 
 const CRON_PRESETS = [
+  { label: 'Hourly — Every hour (00 mins)', value: '0 * * * *' },
+  { label: 'Streak Safe — Twice daily (08:00 & 20:00 UTC)', value: '0 8,20 * * *' },
+  { label: 'Streak Bulletproof — Every 6 hours', value: '0 */6 * * *' },
   { label: 'Morning (08:30 UTC / 14:00 IST)', value: '30 8 * * *' },
   { label: 'Midday (12:00 UTC / 17:30 IST)', value: '0 12 * * *' },
   { label: 'Evening (18:00 UTC / 23:30 IST)', value: '0 18 * * *' },
   { label: 'Night (22:00 UTC / 03:30 IST)', value: '0 22 * * *' },
-  { label: 'Streak Safe — Twice daily (08:00 & 20:00 UTC)', value: '0 8,20 * * *' },
-  { label: 'Streak Bulletproof — Every 6 hours', value: '0 */6 * * *' },
 ];
 
 // Convert cron to time picker values (only for simple "M H * * *" patterns)
@@ -33,6 +34,52 @@ function cronToTimePicker(cron: string): { hour: number; minute: number } | null
 
 function timePickerToCron(hour: number, minute: number): string {
   return `${minute} ${hour} * * *`;
+}
+
+// Convert cron to frequency values
+function cronToFrequency(cron: string): { unit: 'hour' | 'minute'; value: number } | null {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [min, hr, dom, mon, dow] = parts;
+  if (dom !== '*' || mon !== '*' || dow !== '*') return null;
+
+  // Case 1: Every N hours: "0 */N * * *" or "0 * * * *" (N=1)
+  if (min === '0') {
+    if (hr === '*') {
+      return { unit: 'hour', value: 1 };
+    }
+    const hrMatch = hr.match(/^\*\/(\d+)$/);
+    if (hrMatch) {
+      const val = parseInt(hrMatch[1], 10);
+      if (!isNaN(val) && val >= 1 && val <= 23) {
+        return { unit: 'hour', value: val };
+      }
+    }
+  }
+
+  // Case 2: Every M minutes: "*/M * * * *" or "* * * * *" (M=1)
+  if (hr === '*') {
+    if (min === '*') {
+      return { unit: 'minute', value: 1 };
+    }
+    const minMatch = min.match(/^\*\/(\d+)$/);
+    if (minMatch) {
+      const val = parseInt(minMatch[1], 10);
+      if (!isNaN(val) && val >= 1 && val <= 59) {
+        return { unit: 'minute', value: val };
+      }
+    }
+  }
+
+  return null;
+}
+
+function frequencyToCron(unit: 'hour' | 'minute', value: number): string {
+  if (unit === 'hour') {
+    return value === 1 ? '0 * * * *' : `0 */${value} * * *`;
+  } else {
+    return value === 1 ? '* * * * *' : `*/${value} * * * *`;
+  }
 }
 
 // Format UTC hour to IST for display
@@ -55,6 +102,8 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
   const [mode, setMode] = useState<ScheduleMode>('preset');
   const [pickerHour, setPickerHour] = useState(8);
   const [pickerMinute, setPickerMinute] = useState(0);
+  const [freqValue, setFreqValue] = useState(1);
+  const [freqUnit, setFreqUnit] = useState<'hour' | 'minute'>('hour');
 
   // Match initial config to mode
   useEffect(() => {
@@ -67,24 +116,33 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
       setPreset(matchedPreset.value);
       setMode('preset');
     } else {
-      const parsed = cronToTimePicker(config.cron);
-      if (parsed) {
-        setPickerHour(parsed.hour);
-        setPickerMinute(parsed.minute);
+      const parsedTime = cronToTimePicker(config.cron);
+      if (parsedTime) {
+        setPickerHour(parsedTime.hour);
+        setPickerMinute(parsedTime.minute);
         setMode('timepicker');
       } else {
-        setMode('custom');
+        const parsedFreq = cronToFrequency(config.cron);
+        if (parsedFreq) {
+          setFreqValue(parsedFreq.value);
+          setFreqUnit(parsedFreq.unit);
+          setMode('frequency');
+        } else {
+          setMode('custom');
+        }
       }
       setPreset('custom');
     }
   }, [config]);
 
-  // Keep cron in sync with time picker
+  // Keep cron in sync with time picker & frequency picker
   useEffect(() => {
     if (mode === 'timepicker') {
       setCron(timePickerToCron(pickerHour, pickerMinute));
+    } else if (mode === 'frequency') {
+      setCron(frequencyToCron(freqUnit, freqValue));
     }
-  }, [mode, pickerHour, pickerMinute]);
+  }, [mode, pickerHour, pickerMinute, freqUnit, freqValue]);
 
   const handlePresetChange = (val: string) => {
     setPreset(val);
@@ -99,6 +157,8 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
       setCron(first.value);
     } else if (newMode === 'timepicker') {
       setCron(timePickerToCron(pickerHour, pickerMinute));
+    } else if (newMode === 'frequency') {
+      setCron(frequencyToCron(freqUnit, freqValue));
     }
   };
 
@@ -182,7 +242,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
             padding: '4px',
             border: '1px solid rgba(255,255,255,0.06)',
           }}>
-            {(['preset', 'timepicker', 'custom'] as ScheduleMode[]).map((m) => (
+            {(['preset', 'timepicker', 'frequency', 'custom'] as ScheduleMode[]).map((m) => (
               <button
                 key={m}
                 type="button"
@@ -206,8 +266,8 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
                 }}
               >
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                  {m === 'preset' ? <Flash2 size={13} /> : m === 'timepicker' ? <Clock size={13} /> : <TerminalCircle size={13} />}
-                  {m === 'preset' ? 'Presets' : m === 'timepicker' ? 'Pick Time' : 'Custom'}
+                  {m === 'preset' ? <Flash2 size={13} /> : m === 'timepicker' ? <Clock size={13} /> : m === 'frequency' ? <Calendar size={13} /> : <TerminalCircle size={13} />}
+                  {m === 'preset' ? 'Presets' : m === 'timepicker' ? 'Daily' : m === 'frequency' ? 'Frequency' : 'Custom'}
                 </span>
               </button>
             ))}
@@ -313,6 +373,99 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
                   {' '}→{' '}
                   <strong style={{ color: 'var(--accent-cyan)' }}>
                     {utcToIstLabel(pickerHour, pickerMinute)}
+                  </strong>
+                </span>
+                <code style={{
+                  marginLeft: 'auto',
+                  fontSize: '0.72rem',
+                  fontFamily: 'monospace',
+                  color: 'var(--accent-green)',
+                  background: 'rgba(0,0,0,0.3)',
+                  padding: '2px 7px',
+                  borderRadius: '5px',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {cron}
+                </code>
+              </div>
+            </div>
+          )}
+
+          {/* Frequency Mode */}
+          {mode === 'frequency' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                {/* Interval Value */}
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: '0.375rem' }}>
+                    Interval
+                  </span>
+                  <select
+                    className="form-input"
+                    value={freqValue}
+                    onChange={(e) => setFreqValue(Number(e.target.value))}
+                    disabled={loading}
+                    style={{
+                      appearance: 'none',
+                      background: 'rgba(0,0,0,0.3) url("data:image/svg+xml;utf8,<svg fill=\'%2394a3b8\' height=\'24\' viewBox=\'0 0 24 24\' width=\'24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M7 10l5 5 5-5z\'/></svg>") no-repeat right 10px center',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {freqUnit === 'hour'
+                      ? [1, 2, 3, 4, 6, 8, 12].map((v) => (
+                          <option key={v} value={v} style={{ background: '#18181b' }}>
+                            Every {v} {v === 1 ? 'hour' : 'hours'}
+                          </option>
+                        ))
+                      : [5, 10, 15, 20, 30, 45].map((v) => (
+                          <option key={v} value={v} style={{ background: '#18181b' }}>
+                            Every {v} mins
+                          </option>
+                        ))}
+                  </select>
+                </div>
+
+                {/* Recurrence Unit */}
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: '0.375rem' }}>
+                    Unit
+                  </span>
+                  <select
+                    className="form-input"
+                    value={freqUnit}
+                    onChange={(e) => {
+                      const unit = e.target.value as 'hour' | 'minute';
+                      setFreqUnit(unit);
+                      setFreqValue(unit === 'hour' ? 1 : 5);
+                    }}
+                    disabled={loading}
+                    style={{
+                      appearance: 'none',
+                      background: 'rgba(0,0,0,0.3) url("data:image/svg+xml;utf8,<svg fill=\'%2394a3b8\' height=\'24\' viewBox=\'0 0 24 24\' width=\'24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M7 10l5 5 5-5z\'/></svg>") no-repeat right 10px center',
+                      textAlign: 'center',
+                    }}
+                  >
+                    <option value="hour" style={{ background: '#18181b' }}>Hours</option>
+                    <option value="minute" style={{ background: '#18181b' }}>Minutes</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.625rem',
+                padding: '0.6rem 0.875rem',
+                borderRadius: '8px',
+                background: 'rgba(6,182,212,0.06)',
+                border: '1px solid rgba(6,182,212,0.15)',
+              }}>
+                <Calendar size={14} style={{ color: 'var(--accent-cyan)', flexShrink: 0 }} />
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Commits recurring{' '}
+                  <strong style={{ color: '#fff' }}>
+                    every {freqValue} {freqUnit === 'hour' ? (freqValue === 1 ? 'hour' : 'hours') : 'minutes'}
                   </strong>
                 </span>
                 <code style={{

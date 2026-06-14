@@ -617,3 +617,146 @@ jobs:
     }
   },
 };
+
+export function getNextCronRunDate(cron: string, baseDate: Date = new Date()): Date | null {
+  try {
+    const parts = cron.trim().split(/\s+/);
+    if (parts.length !== 5) return null;
+    const [minStr, hourStr, domStr, monStr, dowStr] = parts;
+
+    const parseField = (str: string, min: number, max: number): Set<number> | null => {
+      if (str === '*') return null;
+      const vals = new Set<number>();
+      const list = str.split(',');
+      for (const item of list) {
+        if (item.includes('/')) {
+          const [range, stepStr] = item.split('/');
+          const step = parseInt(stepStr, 10);
+          let start = min;
+          let end = max;
+          if (range !== '*') {
+            const rangeParts = range.split('-');
+            start = parseInt(rangeParts[0], 10);
+            end = rangeParts[1] ? parseInt(rangeParts[1], 10) : max;
+          }
+          for (let i = start; i <= end; i += step) {
+            vals.add(i);
+          }
+        } else if (item.includes('-')) {
+          const [startStr, endStr] = item.split('-');
+          const start = parseInt(startStr, 10);
+          const end = parseInt(endStr, 10);
+          for (let i = start; i <= end; i++) {
+            vals.add(i);
+          }
+        } else {
+          const val = parseInt(item, 10);
+          if (!isNaN(val)) vals.add(val);
+        }
+      }
+      return vals;
+    };
+
+    const minutes = parseField(minStr, 0, 59);
+    const hours = parseField(hourStr, 0, 23);
+    const doms = parseField(domStr, 1, 31);
+    const months = parseField(monStr, 1, 12);
+    const dows = parseField(dowStr, 0, 6);
+
+    let testDate = new Date(baseDate.getTime());
+    testDate.setUTCSeconds(0);
+    testDate.setUTCMilliseconds(0);
+    testDate.setUTCMinutes(testDate.getUTCMinutes() + 1);
+
+    for (let i = 0; i < 525600; i++) {
+      const min = testDate.getUTCMinutes();
+      const hour = testDate.getUTCHours();
+      const dom = testDate.getUTCDate();
+      const mon = testDate.getUTCMonth() + 1;
+      const dow = testDate.getUTCDay();
+
+      const matchMin = !minutes || minutes.has(min);
+      const matchHour = !hours || hours.has(hour);
+      const matchDom = !doms || doms.has(dom);
+      const matchMon = !months || months.has(mon);
+      const matchDow = !dows || dows.has(dow);
+
+      if (matchMin && matchHour && matchDom && matchMon && matchDow) {
+        return testDate;
+      }
+
+      if (!matchHour && hours) {
+        let nextHour = hour;
+        let found = false;
+        for (let h = 1; h <= 24; h++) {
+          const th = (hour + h) % 24;
+          if (hours.has(th)) {
+            nextHour = th;
+            found = true;
+            break;
+          }
+        }
+        if (found) {
+          testDate.setUTCHours(nextHour);
+          testDate.setUTCMinutes(0);
+          if (nextHour <= hour) {
+            testDate.setUTCDate(testDate.getUTCDate() + 1);
+          }
+          continue;
+        }
+      }
+
+      testDate.setUTCMinutes(testDate.getUTCMinutes() + 1);
+    }
+
+    return null;
+  } catch (e) {
+    console.error('Failed to parse cron next run:', e);
+    return null;
+  }
+}
+
+export function getCronDescription(cron: string): string {
+  try {
+    const parts = cron.trim().split(/\s+/);
+    if (parts.length !== 5) return 'Custom Schedule';
+    const [min, hr, dom, mon, dow] = parts;
+
+    if (dom !== '*' || mon !== '*' || dow !== '*') {
+      return `Custom cron: ${cron}`;
+    }
+
+    if (min === '0' && hr === '*') {
+      return 'Every hour';
+    }
+
+    if (min === '0' && hr.startsWith('*/')) {
+      const step = hr.substring(2);
+      return `Every ${step} hours`;
+    }
+
+    if (hr === '*' && min.startsWith('*/')) {
+      const step = min.substring(2);
+      return `Every ${step} minutes`;
+    }
+
+    const h = parseInt(hr, 10);
+    const m = parseInt(min, 10);
+    if (!isNaN(h) && !isNaN(m) && hr.indexOf(',') === -1 && hr.indexOf('/') === -1) {
+      const istH = Math.floor((h * 60 + m + 330) % 1440 / 60);
+      const istM = (h * 60 + m + 330) % 60;
+      const period = istH >= 12 ? 'PM' : 'AM';
+      const dispH = istH % 12 === 0 ? 12 : istH % 12;
+      const dispM = String(istM).padStart(2, '0');
+      return `Daily at ${dispH}:${dispM} ${period} IST (${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} UTC)`;
+    }
+
+    if (min === '0' && hr === '8,20') {
+      return 'Daily at 08:00 & 20:00 UTC';
+    }
+
+    return `Custom cron: ${cron}`;
+  } catch {
+    return 'Custom Schedule';
+  }
+}

@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
-import { Play, Refresh, Link2, CheckCircle, Danger2, Loader, Flash2, CloseCircle2 } from 'reicon-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Play, Refresh, Link2, CheckCircle, Danger2, Loader, Flash2, CloseCircle2, Clock } from 'reicon-react';
 import type { GitHubUser, GitCommit, BoosterConfig as ConfigType } from '../types';
-import { githubService } from '../services/github';
+import { githubService, getNextCronRunDate, getCronDescription } from '../services/github';
 import { BoosterConfig } from './BoosterConfig';
 import confetti from 'canvas-confetti';
 
@@ -72,6 +72,58 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [massError, setMassError] = useState<string | null>(null);
   const [turboMode, setTurboMode] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Active schedule next execution timer
+  const [nextRunDate, setNextRunDate] = useState<Date | null>(null);
+  const [timeRemainingStr, setTimeRemainingStr] = useState<string>('');
+
+  useEffect(() => {
+    if (!isActive || !hasWorkflow || !config.cron) {
+      setNextRunDate(null);
+      setTimeRemainingStr('');
+      return;
+    }
+
+    const updateTimer = () => {
+      const currentNow = new Date();
+      let targetDate = nextRunDate;
+      
+      // Calculate next run date if not set or if we passed it
+      if (!targetDate || currentNow >= targetDate) {
+        targetDate = getNextCronRunDate(config.cron, currentNow);
+        setNextRunDate(targetDate);
+      }
+
+      if (targetDate) {
+        const diffMs = targetDate.getTime() - currentNow.getTime();
+        if (diffMs <= 0) {
+          setTimeRemainingStr('Running...');
+        } else {
+          const diffSecs = Math.floor(diffMs / 1000);
+          const secs = diffSecs % 60;
+          const diffMins = Math.floor(diffSecs / 60);
+          const mins = diffMins % 60;
+          const diffHours = Math.floor(diffMins / 60);
+          const hours = diffHours % 24;
+          const days = Math.floor(diffHours / 24);
+
+          let str = '';
+          if (days > 0) str += `${days}d `;
+          if (hours > 0 || days > 0) str += `${hours}h `;
+          if (mins > 0 || hours > 0 || days > 0) str += `${mins}m `;
+          str += `${secs}s`;
+          setTimeRemainingStr(str);
+        }
+      } else {
+        setTimeRemainingStr('Not scheduled');
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(interval);
+  }, [isActive, hasWorkflow, config.cron, nextRunDate]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -415,7 +467,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </form>
 
         {/* Daily Auto Committer Settings Toggle */}
-        <div className="status-row" style={{ opacity: hasWorkflow ? 1 : 0.6 }}>
+        <div className="status-row" style={{ opacity: hasWorkflow ? 1 : 0.6, marginBottom: isActive && hasWorkflow ? '0' : 'unset' }}>
           <div>
             <span style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block' }}>Daily Background Booster</span>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
@@ -434,6 +486,40 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span className="toggle-slider"></span>
           </label>
         </div>
+
+        {isActive && hasWorkflow && (
+          <div style={{
+            marginTop: '0.75rem',
+            padding: '0.75rem 1rem',
+            background: 'rgba(6, 182, 212, 0.04)',
+            border: '1px solid rgba(6, 182, 212, 0.1)',
+            borderRadius: '12px',
+            fontSize: '0.8rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.4rem',
+            animation: 'fadeInUp 0.3s ease'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Active Schedule:</span>
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{getCronDescription(config.cron)}</span>
+            </div>
+            {nextRunDate && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Next Commit In:</span>
+                <span style={{ fontWeight: 600, color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <Clock size={12} style={{ color: 'var(--accent-cyan)' }} />
+                  {timeRemainingStr}
+                </span>
+              </div>
+            )}
+            {nextRunDate && (
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textAlign: 'right', marginTop: '0.15rem' }}>
+                Estimated target: {nextRunDate.toLocaleString()}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Schedule Configuration */}
