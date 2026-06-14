@@ -66,7 +66,13 @@ export const githubService = {
     });
 
     if (!response.ok) {
-      throw new Error('Invalid Personal Access Token');
+      if (response.status === 401) {
+        throw new Error('Invalid Personal Access Token');
+      }
+      if (response.status === 403) {
+        throw new Error('Access forbidden or GitHub API rate limit exceeded');
+      }
+      throw new Error(`GitHub API returned error status ${response.status}`);
     }
 
     const data = await response.json();

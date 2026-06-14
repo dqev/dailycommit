@@ -14,7 +14,7 @@ on:
         description: 'Email address to associate with the commit'
         required: false
         default: ''
-
+        
 permissions:
   contents: write
 

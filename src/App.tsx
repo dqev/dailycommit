@@ -7,18 +7,57 @@ import { githubService, setGithubRepoDetails, getStoredToken, setStoredToken, cl
 import type { GitHubUser, GitCommit, ContributionCalendar, BoosterConfig as ConfigType } from './types';
 
 function App() {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<GitHubUser | null>(null);
-  const [commits, setCommits] = useState<GitCommit[]>([]);
-  const [contributions, setContributions] = useState<ContributionCalendar | null>(null);
-  const [isActive, setIsActive] = useState(false);
-  const [hasWorkflow, setHasWorkflow] = useState<boolean>(true);
-  const [boosterConfig, setBoosterConfig] = useState<ConfigType>({
-    email: '',
-    message: 'chore: update booster activity',
-    cron: '30 8 * * *',
+  const [token, setToken] = useState<string | null>(() => getStoredToken());
+  const [user, setUser] = useState<GitHubUser | null>(() => {
+    const saved = localStorage.getItem('github_booster_user');
+    try {
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [commits, setCommits] = useState<GitCommit[]>(() => {
+    const saved = localStorage.getItem('github_booster_commits');
+    try {
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [contributions, setContributions] = useState<ContributionCalendar | null>(() => {
+    const saved = localStorage.getItem('github_booster_contributions');
+    try {
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isActive, setIsActive] = useState(() => {
+    const saved = localStorage.getItem('github_booster_is_active');
+    return saved === 'true';
+  });
+  const [hasWorkflow, setHasWorkflow] = useState<boolean>(() => {
+    const saved = localStorage.getItem('github_booster_has_workflow');
+    return saved !== 'false';
+  });
+  const [boosterConfig, setBoosterConfig] = useState<ConfigType>(() => {
+    const saved = localStorage.getItem('github_booster_config');
+    try {
+      return saved ? JSON.parse(saved) : {
+        email: '',
+        message: 'chore: update booster activity',
+        cron: '30 8 * * *',
+      };
+    } catch {
+      return {
+        email: '',
+        message: 'chore: update booster activity',
+        cron: '30 8 * * *',
+      };
+    }
   });
   const [configSaving, setConfigSaving] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'syncing' | 'offline' | null>(null);
   
   const [repoOwner, setRepoOwner] = useState(() => localStorage.getItem('github_booster_owner') || '');
   const [repoName, setRepoName] = useState(() => localStorage.getItem('github_booster_repo') || '');
@@ -53,11 +92,17 @@ function App() {
     }
   }, [token, path, loading]);
 
-  // Initialize and check saved token
+  // Initialize and check saved token/user cache
   useEffect(() => {
     const savedToken = getStoredToken();
-    if (savedToken) {
-      setToken(savedToken);
+    const savedUser = localStorage.getItem('github_booster_user');
+    
+    if (savedToken && savedUser) {
+      // User is cached, render dashboard immediately and sync in the background
+      setLoading(false);
+      syncDataInBackground(savedToken);
+    } else if (savedToken) {
+      // Stored token exists but no cached profile, run full bootstrap
       bootstrapApp(savedToken);
     } else {
       setLoading(false);
@@ -71,21 +116,55 @@ function App() {
       // 1. Verify token & get user details
       const userProfile = await githubService.verifyPAT(authToken);
       setUser(userProfile);
+      localStorage.setItem('github_booster_user', JSON.stringify(userProfile));
 
       // 2. Fetch booster files & config
       await fetchBoosterData(authToken);
     } catch (err: any) {
       console.error(err);
-      setError(
-        err.message?.includes('404')
-          ? `Could not find repository '${repoOwner}/${repoName}'. Make sure the repository exists and your token has correct access.`
-          : err.message || 'Authentication failed. Please check your Personal Access Token.'
-      );
-      if (!err.message?.includes('404')) {
-        handleDisconnect();
+      
+      const isAuthError = err.message?.includes('Invalid Personal Access Token') || err.message?.includes('Unauthorized') || err.message?.includes('401');
+      const isNetworkError = err.message?.includes('fetch') || err.message?.includes('Network') || err.message?.includes('rate limit') || err.message?.includes('403') || err.message?.includes('Connection');
+      
+      if (isAuthError) {
+        setError('Authentication failed. Your Personal Access Token is invalid or has expired.');
+        clearStoredToken();
+        setToken(null);
+      } else if (isNetworkError) {
+        setError(`Connection issue: ${err.message || 'Failed to connect to GitHub. Please check your internet connection.'}`);
+      } else {
+        setError(
+          err.message?.includes('404')
+            ? `Could not find repository '${repoOwner}/${repoName}'. Make sure the repository exists and your token has correct access.`
+            : err.message || 'An unexpected error occurred.'
+        );
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const syncDataInBackground = async (authToken: string) => {
+    setConnectionStatus('syncing');
+    try {
+      // 1. Verify token in background
+      const userProfile = await githubService.verifyPAT(authToken);
+      setUser(userProfile);
+      localStorage.setItem('github_booster_user', JSON.stringify(userProfile));
+
+      // 2. Refresh dashboard metrics and files
+      await fetchBoosterData(authToken);
+      
+      setConnectionStatus('connected');
+      setTimeout(() => setConnectionStatus(null), 3000);
+    } catch (err: any) {
+      console.error('Background sync failed:', err);
+      const isAuthError = err.message?.includes('Invalid Personal Access Token') || err.message?.includes('Unauthorized') || err.message?.includes('401');
+      if (isAuthError) {
+        handleDisconnect();
+      } else {
+        setConnectionStatus('offline');
+      }
     }
   };
 
@@ -95,6 +174,7 @@ function App() {
       const workflowFile = await githubService.getFile(authToken, '.github/workflows/auto-commit.yml');
       const hasWf = workflowFile !== null;
       setHasWorkflow(hasWf);
+      localStorage.setItem('github_booster_has_workflow', String(hasWf));
 
       const [commitsData, workflowStatus, contributionsData, configData] = await Promise.all([
         githubService.getRepoCommits(authToken),
@@ -107,12 +187,28 @@ function App() {
       setIsActive(workflowStatus);
       setContributions(contributionsData);
       if (configData) setBoosterConfig(configData);
+
+      // Cache all details
+      localStorage.setItem('github_booster_commits', JSON.stringify(commitsData));
+      localStorage.setItem('github_booster_contributions', JSON.stringify(contributionsData));
+      localStorage.setItem('github_booster_is_active', String(workflowStatus));
+      if (configData) {
+        localStorage.setItem('github_booster_config', JSON.stringify(configData));
+      }
     } catch (err: any) {
       console.error('Failed to load dashboard data:', err);
-      // Fallback
-      setCommits([]);
-      setIsActive(false);
-      setContributions(null);
+      // Retrieve fallback cached content
+      const cachedCommits = localStorage.getItem('github_booster_commits');
+      const cachedContributions = localStorage.getItem('github_booster_contributions');
+      const cachedIsActive = localStorage.getItem('github_booster_is_active');
+      const cachedHasWorkflow = localStorage.getItem('github_booster_has_workflow');
+      const cachedConfig = localStorage.getItem('github_booster_config');
+
+      if (cachedCommits) setCommits(JSON.parse(cachedCommits));
+      if (cachedContributions) setContributions(JSON.parse(cachedContributions));
+      if (cachedIsActive) setIsActive(cachedIsActive === 'true');
+      if (cachedHasWorkflow) setHasWorkflow(cachedHasWorkflow === 'true');
+      if (cachedConfig) setBoosterConfig(JSON.parse(cachedConfig));
     }
   };
 
@@ -123,6 +219,7 @@ function App() {
     setRepoName(repo);
     setToken(newToken);
     setUser(githubUser);
+    localStorage.setItem('github_booster_user', JSON.stringify(githubUser));
     bootstrapApp(newToken);
     navigate('/dashboard');
   };
@@ -131,12 +228,19 @@ function App() {
     clearStoredToken();
     localStorage.removeItem('github_booster_owner');
     localStorage.removeItem('github_booster_repo');
+    localStorage.removeItem('github_booster_user');
+    localStorage.removeItem('github_booster_commits');
+    localStorage.removeItem('github_booster_contributions');
+    localStorage.removeItem('github_booster_config');
+    localStorage.removeItem('github_booster_is_active');
+    localStorage.removeItem('github_booster_has_workflow');
     setToken(null);
     setUser(null);
     setCommits([]);
     setContributions(null);
     setIsActive(false);
     setError(null);
+    setConnectionStatus(null);
     navigate('/');
   };
 
@@ -144,6 +248,7 @@ function App() {
     if (!token) return;
     await githubService.toggleWorkflow(token, active);
     setIsActive(active);
+    localStorage.setItem('github_booster_is_active', String(active));
   };
 
   const handleInitializeRepository = async () => {
@@ -159,6 +264,7 @@ function App() {
     try {
       await githubService.saveConfig(token, newConfig);
       setBoosterConfig(newConfig);
+      localStorage.setItem('github_booster_config', JSON.stringify(newConfig));
     } finally {
       setConfigSaving(false);
     }
@@ -175,9 +281,11 @@ function App() {
   }
 
   if (error) {
+    const isNetworkError = error.toLowerCase().includes('connection') || error.toLowerCase().includes('fetch') || error.toLowerCase().includes('rate limit');
+
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', width: '100vw', backgroundColor: 'var(--bg-color)', padding: '1.5rem' }}>
-        <div className="connect-card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem' }}>
+        <div className="glass-panel" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem', maxWidth: '400px', width: '100%' }}>
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -185,16 +293,45 @@ function App() {
             width: '56px',
             height: '56px',
             borderRadius: '50%',
-            background: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.2)'
+            background: isNetworkError ? 'rgba(6, 182, 212, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: isNetworkError ? '1px solid rgba(6, 182, 212, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)'
           }}>
-            <Danger2 size={28} style={{ color: 'var(--accent-red)' }} />
+            {isNetworkError ? (
+              <Loader className="pulse-loader" size={28} style={{ color: 'var(--accent-cyan)' }} />
+            ) : (
+              <Danger2 size={28} style={{ color: 'var(--accent-red)' }} />
+            )}
           </div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 500, margin: 0 }}>Configuration Error</h2>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 500, margin: 0 }}>
+            {isNetworkError ? 'Connection Error' : 'Configuration Error'}
+          </h2>
           <p style={{ color: 'var(--text-secondary)', lineHeight: '1.6', fontSize: '0.875rem', margin: 0 }}>{error}</p>
-          <button onClick={handleDisconnect} className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }}>
-            Try Another Token
-          </button>
+          
+          {isNetworkError ? (
+            <div style={{ display: 'flex', gap: '0.75rem', width: '100%', marginTop: '0.5rem' }}>
+              <button 
+                onClick={() => {
+                  const savedToken = getStoredToken();
+                  if (savedToken) bootstrapApp(savedToken);
+                }} 
+                className="btn btn-primary" 
+                style={{ flex: 1 }}
+              >
+                Retry Connection
+              </button>
+              <button 
+                onClick={handleDisconnect} 
+                className="btn btn-secondary" 
+                style={{ flex: 1 }}
+              >
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <button onClick={handleDisconnect} className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }}>
+              Try Another Token
+            </button>
+          )}
         </div>
       </div>
     );
@@ -241,6 +378,24 @@ function App() {
             <span className="logo-text" style={{ fontFamily: 'Cooper, serif', fontWeight: 500, letterSpacing: '-0.3px' }}>Activity</span>
           </div>
           <div className="header-actions">
+            {connectionStatus === 'offline' && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--accent-red)', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '0.35rem 0.65rem', borderRadius: '8px', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.35rem', height: '2.1rem' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-red)' }} />
+                Offline
+              </span>
+            )}
+            {connectionStatus === 'syncing' && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', background: 'rgba(6, 182, 212, 0.1)', border: '1px solid rgba(6, 182, 212, 0.2)', padding: '0.35rem 0.65rem', borderRadius: '8px', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.35rem', height: '2.1rem' }}>
+                <span className="pulse-loader" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-cyan)' }} />
+                Syncing
+              </span>
+            )}
+            {connectionStatus === 'connected' && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--accent-green)', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '0.35rem 0.65rem', borderRadius: '8px', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.35rem', height: '2.1rem' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-green)' }} />
+                Connected
+              </span>
+            )}
             <button
               onClick={handleDisconnect}
               className="btn btn-secondary"
