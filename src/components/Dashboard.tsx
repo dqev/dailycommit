@@ -9,6 +9,8 @@ interface DashboardProps {
   token: string;
   user: GitHubUser;
   commits: GitCommit[];
+  logs: any[]; // added logs
+  localLogs: any[]; // added local logs
   onRefresh: () => Promise<void>;
   onToggleStatus: (active: boolean) => Promise<void>;
   isActive: boolean;
@@ -33,6 +35,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   token,
   user,
   commits,
+  logs, // added logs
+  localLogs, // added local logs
   onRefresh,
   onToggleStatus,
   isActive,
@@ -76,6 +80,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Active schedule next execution timer
   const [nextRunDate, setNextRunDate] = useState<Date | null>(null);
   const [timeRemainingStr, setTimeRemainingStr] = useState<string>('');
+  const lastRefreshedTargetTimeRef = useRef<number>(0);
 
   useEffect(() => {
     if (!isActive || !hasWorkflow || !config.cron) {
@@ -98,6 +103,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
         const diffMs = targetDate.getTime() - currentNow.getTime();
         if (diffMs <= 0) {
           setTimeRemainingStr('Running...');
+          // Trigger a refresh after a small delay to pick up the new commit
+          if (lastRefreshedTargetTimeRef.current !== targetDate.getTime()) {
+            lastRefreshedTargetTimeRef.current = targetDate.getTime();
+            setTimeout(() => {
+              onRefresh();
+            }, 3000);
+          }
         } else {
           const diffSecs = Math.floor(diffMs / 1000);
           const secs = diffSecs % 60;
@@ -123,7 +135,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const interval = setInterval(updateTimer, 1000);
 
     return () => clearInterval(interval);
-  }, [isActive, hasWorkflow, config.cron, nextRunDate]);
+  }, [isActive, hasWorkflow, config.cron, nextRunDate, onRefresh]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -662,6 +674,87 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Booster Run History / Logs */}
+      {logs.length > 0 && (
+        <div className="glass-panel" style={{ paddingBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <h3 style={{ margin: 0 }}>Booster Run History</h3>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>GitHub Actions runs</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto' }}>
+            {logs.map((item) => (
+              <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#161616', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '8px', fontSize: '0.8rem' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', overflow: 'hidden' }}>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: item.status === 'success'
+                      ? 'var(--accent-green)'
+                      : item.status === 'failure'
+                      ? 'var(--accent-red)'
+                      : 'var(--accent-cyan)',
+                    boxShadow: item.status === 'success'
+                      ? '0 0 8px rgba(16,185,129,0.4)'
+                      : item.status === 'failure'
+                      ? '0 0 8px rgba(239,68,68,0.4)'
+                      : '0 0 8px rgba(6,182,212,0.4)',
+                    flexShrink: 0
+                  }} />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', overflow: 'hidden' }}>
+                    <span style={{ color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {item.message}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                      {new Date(item.time).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Local Activity Log (activity_log.txt) */}
+      {localLogs.length > 0 && (
+        <div className="glass-panel" style={{ paddingBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Clock size={16} style={{ color: 'var(--accent-cyan)' }} />
+              <h3 style={{ margin: 0 }}>Local Activity Log</h3>
+            </div>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>activity_log.txt</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '200px', overflowY: 'auto' }}>
+            {localLogs.map((item, idx) => (
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', background: '#161616', border: '1px solid rgba(255,255,255,0.03)', borderRadius: '8px', fontSize: '0.8rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', overflow: 'hidden', marginRight: '0.5rem' }}>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {item.message}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '0.1rem 0.35rem',
+                      borderRadius: '4px',
+                      background: 'rgba(6, 182, 212, 0.1)',
+                      color: 'var(--accent-cyan)',
+                      marginRight: '0.5rem',
+                      fontWeight: 600,
+                      fontSize: '0.65rem'
+                    }}>
+                      {item.type}
+                    </span>
+                    • {new Date(item.time).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Real commits feed */}
       {commits.length > 0 && (

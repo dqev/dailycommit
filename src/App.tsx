@@ -4,7 +4,7 @@ import { GitHubConnect } from './components/GitHubConnect';
 import { Dashboard } from './components/Dashboard';
 import { ContributionGraph } from './components/ContributionGraph';
 import { githubService, setGithubRepoDetails, getStoredToken, setStoredToken, clearStoredToken } from './services/github';
-import type { GitHubUser, GitCommit, ContributionCalendar, BoosterConfig as ConfigType } from './types';
+import type { GitHubUser, GitCommit, ContributionCalendar, LogEntry, BoosterConfig as ConfigType } from './types';
 
 function App() {
   const [token, setToken] = useState<string | null>(() => getStoredToken());
@@ -58,6 +58,39 @@ function App() {
   });
   const [configSaving, setConfigSaving] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'syncing' | 'offline' | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>(() => {
+    const saved = localStorage.getItem('github_booster_logs');
+    try {
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [localLogs, setLocalLogs] = useState<any[]>(() => {
+    const saved = localStorage.getItem('github_booster_local_logs');
+    try {
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const fetchLocalLogs = async () => {
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocalhost) return;
+    try {
+      const response = await fetch('/api/activity-log');
+      if (response.ok) {
+        const data = await response.json();
+        const logsList = data.logs || [];
+        setLocalLogs(logsList);
+        localStorage.setItem('github_booster_local_logs', JSON.stringify(logsList));
+      }
+    } catch (err) {
+      console.warn('Failed to fetch local activity logs:', err);
+    }
+  };
   
   const [repoOwner, setRepoOwner] = useState(() => localStorage.getItem('github_booster_owner') || '');
   const [repoName, setRepoName] = useState(() => localStorage.getItem('github_booster_repo') || '');
@@ -170,23 +203,29 @@ function App() {
 
   const fetchBoosterData = async (authToken: string = token || '') => {
     if (!authToken) return;
+    
+    // Always fetch local logs in parallel when on localhost
+    fetchLocalLogs();
+
     try {
       const workflowFile = await githubService.getFile(authToken, '.github/workflows/auto-commit.yml');
       const hasWf = workflowFile !== null;
       setHasWorkflow(hasWf);
       localStorage.setItem('github_booster_has_workflow', String(hasWf));
 
-      const [commitsData, workflowStatus, contributionsData, configData] = await Promise.all([
+      const [commitsData, workflowStatus, contributionsData, configData, logsData] = await Promise.all([
         githubService.getRepoCommits(authToken),
         hasWf ? githubService.getWorkflowStatus(authToken) : Promise.resolve(false),
         githubService.getRealContributions(authToken),
         githubService.getConfig(authToken).catch(() => null),
+        hasWf ? githubService.getLogs(authToken) : Promise.resolve([]),
       ]);
 
       setCommits(commitsData);
       setIsActive(workflowStatus);
       setContributions(contributionsData);
       if (configData) setBoosterConfig(configData);
+      setLogs(logsData);
 
       // Cache all details
       localStorage.setItem('github_booster_commits', JSON.stringify(commitsData));
@@ -194,6 +233,28 @@ function App() {
       localStorage.setItem('github_booster_is_active', String(workflowStatus));
       if (configData) {
         localStorage.setItem('github_booster_config', JSON.stringify(configData));
+      }
+      localStorage.setItem('github_booster_logs', JSON.stringify(logsData));
+
+      // Synchronize configurations and active status to the local Node.js scheduler files
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalhost) {
+        try {
+          if (configData) {
+            await fetch('/api/save-config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(configData),
+            });
+          }
+          await fetch('/api/save-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active: workflowStatus }),
+          });
+        } catch (localErr) {
+          console.warn('Failed to sync config/status to local disk on load:', localErr);
+        }
       }
     } catch (err: any) {
       console.error('Failed to load dashboard data:', err);
@@ -203,12 +264,16 @@ function App() {
       const cachedIsActive = localStorage.getItem('github_booster_is_active');
       const cachedHasWorkflow = localStorage.getItem('github_booster_has_workflow');
       const cachedConfig = localStorage.getItem('github_booster_config');
+      const cachedLogs = localStorage.getItem('github_booster_logs');
+      const cachedLocalLogs = localStorage.getItem('github_booster_local_logs');
 
       if (cachedCommits) setCommits(JSON.parse(cachedCommits));
       if (cachedContributions) setContributions(JSON.parse(cachedContributions));
       if (cachedIsActive) setIsActive(cachedIsActive === 'true');
       if (cachedHasWorkflow) setHasWorkflow(cachedHasWorkflow === 'true');
       if (cachedConfig) setBoosterConfig(JSON.parse(cachedConfig));
+      if (cachedLogs) setLogs(JSON.parse(cachedLogs));
+      if (cachedLocalLogs) setLocalLogs(JSON.parse(cachedLocalLogs));
     }
   };
 
@@ -234,10 +299,14 @@ function App() {
     localStorage.removeItem('github_booster_config');
     localStorage.removeItem('github_booster_is_active');
     localStorage.removeItem('github_booster_has_workflow');
+    localStorage.removeItem('github_booster_logs');
+    localStorage.removeItem('github_booster_local_logs');
     setToken(null);
     setUser(null);
     setCommits([]);
     setContributions(null);
+    setLogs([]);
+    setLocalLogs([]);
     setIsActive(false);
     setError(null);
     setConnectionStatus(null);
@@ -246,9 +315,35 @@ function App() {
 
   const handleToggleStatus = async (active: boolean) => {
     if (!token) return;
-    await githubService.toggleWorkflow(token, active);
+    
+    let remoteSuccess = true;
+    try {
+      await githubService.toggleWorkflow(token, active);
+    } catch (err: any) {
+      console.warn('Failed to update remote workflow status:', err);
+      remoteSuccess = false;
+    }
+    
     setIsActive(active);
     localStorage.setItem('github_booster_is_active', String(active));
+    
+    // Sync active state to local background scheduler
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocalhost) {
+      try {
+        await fetch('/api/save-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active }),
+        });
+      } catch (localErr) {
+        console.warn('Failed to sync active status to local disk:', localErr);
+      }
+    }
+    
+    if (!remoteSuccess) {
+      throw new Error('Offline mode: Updated local scheduler only. GitHub Actions workflow could not be updated.');
+    }
   };
 
   const handleInitializeRepository = async () => {
@@ -430,6 +525,8 @@ function App() {
               token={token}
               user={user}
               commits={commits}
+              logs={logs}
+              localLogs={localLogs}
               onRefresh={() => fetchBoosterData(token)}
               onToggleStatus={handleToggleStatus}
               isActive={isActive}
