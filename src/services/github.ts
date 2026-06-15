@@ -19,6 +19,115 @@ export function encodeToken(token: string): string {
   return btoa(token.split('').reverse().join(''));
 }
 
+/**
+ * Generate a GitHub Actions workflow YAML.
+ * When dailyCommitCount >= 3, multiple cron triggers are added spread across the day,
+ * each with a random sleep jitter so commits land at organic-looking times.
+ * When count is 0 or 1, a single cron is used (the supplied `cron` string).
+ */
+export function generateWorkflowYaml(options: {
+  cron: string;
+  email?: string;
+  dailyCommitCount?: number;
+}): string {
+  const count = options.dailyCommitCount ?? 0;
+
+  // Spread windows across UTC day (hours). We pick N windows out of these.
+  const UTC_WINDOWS = [1, 5, 9, 13, 17, 21]; // up to 6 spread points
+  const selected = UTC_WINDOWS.slice(0, Math.max(count, 1));
+
+  // Build cron schedule lines
+  let scheduleLines: string;
+  if (count >= 3) {
+    scheduleLines = selected
+      .map((h) => `    - cron: '0 ${h} * * *'`)
+      .join('\n');
+  } else {
+    scheduleLines = `    - cron: '${options.cron}'`;
+  }
+
+  // Jitter step — only inject when in multi-commit mode
+  // Note: inside JS template literals only ${} is interpolated.
+  // $(()), $(cmd), and $VAR are safe and do NOT need escaping.
+  // Only ${VAR} bash refs need escaping as \${VAR}.
+  const jitterStep =
+    count >= 3
+      ? `
+      - name: Random time jitter
+        run: |
+          # Sleep up to 59 minutes so commits land at truly random times
+          JITTER=$((RANDOM % 3540))
+          echo "Sleeping \${JITTER}s before committing..."
+          sleep $JITTER
+`
+      : '';
+
+  return `name: GitHub Activity Booster
+
+on:
+  schedule:
+${scheduleLines}
+  workflow_dispatch:
+    inputs:
+      commit_message:
+        description: 'Commit message for this boost'
+        required: false
+        default: 'chore: auto boost activity [skip ci]'
+      committer_email:
+        description: 'Email address to associate with the commit'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  boost:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+${jitterStep}
+      - name: Update activity log
+        run: |
+          echo "Boosted on: $(date)" >> activity_log.txt
+
+      - name: Git commit and push
+        run: |
+          EMAIL="\${{ github.event.inputs.committer_email }}"
+          if [ -z "$EMAIL" ]; then
+            if [ -f .booster_email ]; then
+              EMAIL=$(cat .booster_email)
+            else
+              EMAIL="\${{ github.actor_id }}+\${{ github.actor }}@users.noreply.github.com"
+            fi
+          fi
+
+          MSG="\${{ github.event.inputs.commit_message }}"
+          if [ -z "$MSG" ]; then
+            if [ -f .booster_msg ]; then
+              MSG=$(cat .booster_msg)
+            else
+              MSG="chore: auto boost activity [skip ci]"
+            fi
+          fi
+
+          git config --global user.name "\${{ github.actor }}"
+          git config --global user.email "$EMAIL"
+
+          git add activity_log.txt
+
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            git commit -m "$MSG"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+`;
+}
+
 export function decodeToken(encoded: string | null): string | null {
   if (!encoded) return null;
   try {
@@ -152,21 +261,27 @@ export const githubService = {
 
   // Load configuration from the repository (YAML & tracker files)
   async getConfig(token: string): Promise<BoosterConfig> {
-    const defaultCron = '30 8 * * *';
-    const defaultEmail = 'devchauhan@users.noreply.github.com';
+    const defaultCron = '0 1 * * *';
+    const defaultEmail = '';
     const defaultMsg = 'chore: auto boost activity [skip ci]';
 
     let cron = defaultCron;
     let email = defaultEmail;
     let message = defaultMsg;
+    let dailyCommitCount = 0;
 
-    // 1. Fetch cron from workflow file
+    // 1. Fetch cron schedule(s) from workflow file
     const workflowFile = await this.getFile(token, '.github/workflows/auto-commit.yml');
     if (workflowFile) {
-      const cronRegex = /-\s*cron:\s*['"]([^'"]+)['"]/;
-      const match = workflowFile.content.match(cronRegex);
-      if (match) {
-        cron = match[1];
+      const cronRegex = /-\s*cron:\s*['"]([^'"]+)['"]/g;
+      const matches = [...workflowFile.content.matchAll(cronRegex)];
+      if (matches.length >= 3) {
+        // Multi-commit mode — count how many cron triggers are present
+        dailyCommitCount = matches.length;
+        cron = matches[0][1]; // store the first cron as representative
+      } else if (matches.length === 1) {
+        cron = matches[0][1];
+        dailyCommitCount = 0;
       }
     }
 
@@ -182,7 +297,7 @@ export const githubService = {
       message = msgFile.content.trim();
     }
 
-    return { cron, email, message };
+    return { cron, email, message, dailyCommitCount };
   },
 
   // Save the entire booster configuration
@@ -207,32 +322,27 @@ export const githubService = {
       msgFile?.sha
     );
 
-    // 3. Update Cron in workflow file
+    // 3. Regenerate the entire workflow file based on the new config
+    // This handles both single-cron and multi-commit (random daily) modes.
     const workflowFile = await this.getFile(token, '.github/workflows/auto-commit.yml');
-    if (workflowFile) {
-      const cronRegex = /(-\s*cron:\s*['"])([^'"]+)(['"])/;
-      let updatedContent = workflowFile.content;
-      if (cronRegex.test(workflowFile.content)) {
-        updatedContent = workflowFile.content.replace(cronRegex, `$1${newConfig.cron}$3`);
-      } else {
-        // Fallback: search and inject schedule if missing
-        const scheduleIndex = workflowFile.content.indexOf('schedule:');
-        if (scheduleIndex !== -1) {
-          // Add cron under schedule
-          const before = workflowFile.content.substring(0, scheduleIndex + 9);
-          const after = workflowFile.content.substring(scheduleIndex + 9);
-          updatedContent = `${before}\n    - cron: '${newConfig.cron}'${after}`;
-        }
-      }
+    const newWorkflowContent = generateWorkflowYaml({
+      cron: newConfig.cron,
+      email: newConfig.email,
+      dailyCommitCount: newConfig.dailyCommitCount ?? 0,
+    });
 
-      await this.updateFile(
-        token,
-        '.github/workflows/auto-commit.yml',
-        updatedContent,
-        `chore: update booster cron schedule to ${newConfig.cron}`,
-        workflowFile.sha
-      );
-    }
+    const commitCountLabel =
+      (newConfig.dailyCommitCount ?? 0) >= 3
+        ? `${newConfig.dailyCommitCount} random commits/day`
+        : `cron ${newConfig.cron}`;
+
+    await this.updateFile(
+      token,
+      '.github/workflows/auto-commit.yml',
+      newWorkflowContent,
+      `chore: update booster schedule to ${commitCountLabel}`,
+      workflowFile?.sha
+    );
   },
 
   // Fetch recent GitHub Actions workflow runs
@@ -506,72 +616,14 @@ export const githubService = {
   },
 
   // Automatically initialize the required GitHub Action workflow and configuration files
-  async initializeRepository(token: string, email: string): Promise<void> {
-    const defaultWorkflow = `name: GitHub Activity Booster
-
-on:
-  schedule:
-    # Runs twice daily to ensure streak safety
-    - cron: '0 8,20 * * *'
-  workflow_dispatch:
-    inputs:
-      commit_message:
-        description: 'Commit message for this boost'
-        required: false
-        default: 'chore: auto boost activity [skip ci]'
-      committer_email:
-        description: 'Email address to associate with the commit'
-        required: false
-        default: ''
-
-permissions:
-  contents: write
-
-jobs:
-  boost:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-
-      - name: Update activity log
-        run: |
-          echo "Boosted on: $(date)" >> activity_log.txt
-
-      - name: Git commit and push
-        run: |
-          EMAIL="\${{ github.event.inputs.committer_email }}"
-          if [ -z "$EMAIL" ]; then
-            if [ -f .booster_email ]; then
-              EMAIL=\$(cat .booster_email)
-            else
-              EMAIL="\${{ github.actor_id }}+\${{ github.actor }}@users.noreply.github.com"
-            fi
-          fi
-          
-          MSG="\${{ github.event.inputs.commit_message }}"
-          if [ -z "$MSG" ]; then
-            if [ -f .booster_msg ]; then
-              MSG=\$(cat .booster_msg)
-            else
-              MSG="chore: auto boost activity [skip ci]"
-            fi
-          fi
-
-          git config --global user.name "\${{ github.actor }}"
-          git config --global user.email "\$EMAIL"
-          
-          git add activity_log.txt
-          
-          if ! git diff --quiet || ! git diff --staged --quiet; then
-            git commit -m "\$MSG"
-            git push
-          else
-            echo "No changes to commit."
-          fi
-`;
+  // Defaults to 4 random commits per day — ideal for secondary account setup.
+  async initializeRepository(token: string, email: string, dailyCommitCount: number = 4): Promise<void> {
+    // Generate workflow with multi-commit random daily mode by default
+    const defaultWorkflow = generateWorkflowYaml({
+      cron: '0 1 * * *', // fallback single-cron (unused when count >= 3)
+      email,
+      dailyCommitCount,
+    });
 
     // 1. Create/Update workflow file
     const wf = await this.getFile(token, '.github/workflows/auto-commit.yml');
@@ -579,22 +631,22 @@ jobs:
       token,
       '.github/workflows/auto-commit.yml',
       defaultWorkflow,
-      'chore: initialize auto-commit workflow',
+      `chore: initialize auto-commit workflow (${dailyCommitCount} commits/day)`,
       wf?.sha
     );
 
-    // 2. Create/Update .booster_email
+    // 2. Always write .booster_email — CRITICAL: must match the secondary account's GitHub email
+    // so commits register on the correct contribution graph.
     const emailFile = await this.getFile(token, '.booster_email');
-    if (!emailFile) {
-      await this.updateFile(
-        token,
-        '.booster_email',
-        email,
-        'chore: initialize booster email'
-      );
-    }
+    await this.updateFile(
+      token,
+      '.booster_email',
+      email,
+      'chore: set booster email for commit attribution',
+      emailFile?.sha
+    );
 
-    // 3. Create/Update .booster_msg
+    // 3. Create/Update .booster_msg (only if not already set by user)
     const msgFile = await this.getFile(token, '.booster_msg');
     if (!msgFile) {
       await this.updateFile(

@@ -2,8 +2,10 @@ name: GitHub Activity Booster
 
 on:
   schedule:
-    # Runs daily at a scheduled time.
-    - cron: '30 8 * * *'
+    - cron: '0 1 * * *'   # ~1:00–2:00 AM UTC  → ~6:30–7:30 AM IST
+    - cron: '0 5 * * *'   # ~5:00–6:00 AM UTC  → ~10:30–11:30 AM IST
+    - cron: '0 9 * * *'   # ~9:00–10:00 AM UTC → ~2:30–3:30 PM IST
+    - cron: '0 13 * * *'  # ~1:00–2:00 PM UTC  → ~6:30–7:30 PM IST
   workflow_dispatch:
     inputs:
       commit_message:
@@ -14,7 +16,7 @@ on:
         description: 'Email address to associate with the commit'
         required: false
         default: ''
-        
+
 permissions:
   contents: write
 
@@ -26,6 +28,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: true
+
+      - name: Random time jitter
+        run: |
+          # Sleep up to 59 minutes so commits land at truly random times within each window
+          JITTER=$((RANDOM % 3540))
+          echo "Sleeping ${JITTER}s before committing..."
+          sleep $JITTER
 
       - name: Update activity log
         run: |

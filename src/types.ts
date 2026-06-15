@@ -10,6 +10,7 @@ export interface BoosterConfig {
   cron: string;
   email: string;
   message: string;
+  dailyCommitCount?: number; // 0 = single cron mode; 3-5 = random multi-commit mode
 }
 
 export interface WorkflowRun {

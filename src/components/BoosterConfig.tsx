@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Envelope, MessageSquare2, Clock, Save22, Loader, Check, Calendar, Flash2, TerminalCircle } from 'reicon-react';
+import { Envelope, MessageSquare2, Clock, Save22, Loader, Check, Calendar, Flash2, TerminalCircle, Shuffle } from 'reicon-react';
 import type { BoosterConfig as ConfigType } from '../types';
 
 interface BoosterConfigProps {
@@ -8,7 +8,7 @@ interface BoosterConfigProps {
   loading: boolean;
 }
 
-type ScheduleMode = 'preset' | 'timepicker' | 'frequency' | 'custom';
+type ScheduleMode = 'preset' | 'timepicker' | 'frequency' | 'custom' | 'random';
 
 const CRON_PRESETS = [
   { label: 'Hourly — Every hour (00 mins)', value: '0 * * * *' },
@@ -104,12 +104,22 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
   const [pickerMinute, setPickerMinute] = useState(0);
   const [freqValue, setFreqValue] = useState(1);
   const [freqUnit, setFreqUnit] = useState<'hour' | 'minute'>('hour');
+  const [dailyCommitCount, setDailyCommitCount] = useState<number>(
+    config.dailyCommitCount && config.dailyCommitCount >= 3 ? config.dailyCommitCount : 4
+  );
 
   // Match initial config to mode
   useEffect(() => {
     setEmail(config.email);
     setMessage(config.message);
     setCron(config.cron);
+    setDailyCommitCount(config.dailyCommitCount && config.dailyCommitCount >= 3 ? config.dailyCommitCount : 4);
+
+    // Auto-detect mode from config
+    if (config.dailyCommitCount && config.dailyCommitCount >= 3) {
+      setMode('random');
+      return;
+    }
 
     const matchedPreset = CRON_PRESETS.find((p) => p.value === config.cron);
     if (matchedPreset) {
@@ -151,7 +161,10 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
 
   const handleModeChange = (newMode: ScheduleMode) => {
     setMode(newMode);
-    if (newMode === 'preset') {
+    if (newMode === 'random') {
+      // In random mode, cron is not directly used — dailyCommitCount drives the workflow
+      // Nothing to do here; dailyCommitCount state already set
+    } else if (newMode === 'preset') {
       const first = CRON_PRESETS[0];
       setPreset(first.value);
       setCron(first.value);
@@ -169,6 +182,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
       email: email.trim(),
       message: message.trim(),
       cron: cron.trim(),
+      dailyCommitCount: mode === 'random' ? dailyCommitCount : 0,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -242,7 +256,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
             padding: '4px',
             border: '1px solid rgba(255,255,255,0.06)',
           }}>
-            {(['preset', 'timepicker', 'frequency', 'custom'] as ScheduleMode[]).map((m) => (
+            {(['random', 'preset', 'timepicker', 'frequency', 'custom'] as ScheduleMode[]).map((m) => (
               <button
                 key={m}
                 type="button"
@@ -259,19 +273,119 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
                   letterSpacing: '0.01em',
                   transition: 'all 0.2s ease',
                   background: mode === m
-                    ? 'var(--accent-green)'
+                    ? m === 'random' ? 'var(--accent-cyan)' : 'var(--accent-green)'
                     : 'transparent',
                   color: mode === m ? '#0d1117' : 'var(--text-muted)',
-                  boxShadow: mode === m ? '0 2px 8px rgba(16,185,129,0.25)' : 'none',
+                  boxShadow: mode === m
+                    ? m === 'random' ? '0 2px 8px rgba(6,182,212,0.3)' : '0 2px 8px rgba(16,185,129,0.25)'
+                    : 'none',
                 }}
               >
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}>
-                  {m === 'preset' ? <Flash2 size={13} /> : m === 'timepicker' ? <Clock size={13} /> : m === 'frequency' ? <Calendar size={13} /> : <TerminalCircle size={13} />}
-                  {m === 'preset' ? 'Presets' : m === 'timepicker' ? 'Daily' : m === 'frequency' ? 'Frequency' : 'Custom'}
+                  {m === 'random' ? <Shuffle size={13} /> : m === 'preset' ? <Flash2 size={13} /> : m === 'timepicker' ? <Clock size={13} /> : m === 'frequency' ? <Calendar size={13} /> : <TerminalCircle size={13} />}
+                  {m === 'random' ? 'Random' : m === 'preset' ? 'Presets' : m === 'timepicker' ? 'Daily' : m === 'frequency' ? 'Freq' : 'Custom'}
                 </span>
               </button>
             ))}
           </div>
+
+          {/* Random Daily Mode */}
+          {mode === 'random' && (() => {
+            const UTC_WINDOWS = [1, 5, 9, 13, 17, 21];
+            const selected = UTC_WINDOWS.slice(0, dailyCommitCount);
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+                {/* Banner */}
+                <div style={{
+                  display: 'flex',
+                  gap: '0.625rem',
+                  padding: '0.75rem 0.875rem',
+                  borderRadius: '10px',
+                  background: 'rgba(6,182,212,0.07)',
+                  border: '1px solid rgba(6,182,212,0.18)',
+                  alignItems: 'flex-start',
+                }}>
+                  <Shuffle size={15} style={{ color: 'var(--accent-cyan)', flexShrink: 0, marginTop: '1px' }} />
+                  <div>
+                    <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent-cyan)', marginBottom: '0.2rem' }}>
+                      Runs on GitHub's servers — no machine needed
+                    </p>
+                    <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                      Each trigger sleeps a random 0–59 min, so commits land at different times every day. Once saved and Active, this runs forever even after you log out.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Count stepper */}
+                <div>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: '0.5rem' }}>
+                    Commits per day
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {[3, 4, 5].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setDailyCommitCount(n)}
+                        disabled={loading}
+                        style={{
+                          flex: 1,
+                          padding: '0.6rem',
+                          borderRadius: '8px',
+                          border: dailyCommitCount === n
+                            ? '1.5px solid var(--accent-cyan)'
+                            : '1px solid rgba(255,255,255,0.08)',
+                          background: dailyCommitCount === n
+                            ? 'rgba(6,182,212,0.12)'
+                            : 'rgba(255,255,255,0.03)',
+                          color: dailyCommitCount === n ? 'var(--accent-cyan)' : 'var(--text-muted)',
+                          fontWeight: 700,
+                          fontSize: '1rem',
+                          cursor: 'pointer',
+                          transition: 'all 0.18s ease',
+                        }}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Schedule preview */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Trigger windows today
+                  </span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    {selected.map((h) => {
+                      const istH = Math.floor(((h * 60 + 330) % 1440) / 60);
+                      const istM = (h * 60 + 330) % 60;
+                      const period = istH >= 12 ? 'PM' : 'AM';
+                      const dh = istH % 12 === 0 ? 12 : istH % 12;
+                      const dm = String(istM).padStart(2, '0');
+                      return (
+                        <span key={h} style={{
+                          fontSize: '0.72rem',
+                          padding: '0.3rem 0.6rem',
+                          borderRadius: '6px',
+                          background: 'rgba(6,182,212,0.08)',
+                          border: '1px solid rgba(6,182,212,0.18)',
+                          color: 'var(--accent-cyan)',
+                          fontWeight: 600,
+                          fontFamily: 'monospace',
+                        }}>
+                          ~{String(h).padStart(2,'0')}:XX UTC &nbsp;·&nbsp; ~{dh}:{dm} {period} IST
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                    Each window has up to ±59 min random jitter applied.
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Preset Mode */}
           {mode === 'preset' && (
