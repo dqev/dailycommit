@@ -13,6 +13,17 @@ export interface BoosterConfig {
   dailyCommitCount?: number; // 0 = single cron mode; 3-5 = random multi-commit mode
 }
 
+export interface MultiAccountConfig {
+  id: string; // unique identifier
+  token: string; // encoded PAT
+  user: GitHubUser;
+  owner: string;
+  repo: string;
+  config: BoosterConfig;
+  active: boolean;
+  lastRun?: number;
+}
+
 export interface WorkflowRun {
   id: number;
   status: string;

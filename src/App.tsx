@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Logout, Loader, Danger2, ArrowRight, Clock, Shield, ChevronLeft } from 'reicon-react';
+import { Logout, Loader, Danger2, ArrowRight, Clock, Shield, ChevronLeft, Settings } from 'reicon-react';
 import { GitHubConnect } from './components/GitHubConnect';
 import { Dashboard } from './components/Dashboard';
 import { ContributionGraph } from './components/ContributionGraph';
+import { MultiAccountManager } from './components/MultiAccountManager';
 import { githubService, setGithubRepoDetails, getStoredToken, setStoredToken, clearStoredToken } from './services/github';
 import type { GitHubUser, GitCommit, ContributionCalendar, LogEntry, BoosterConfig as ConfigType } from './types';
 
@@ -91,7 +92,7 @@ function App() {
       console.warn('Failed to fetch local activity logs:', err);
     }
   };
-  
+
   const [repoOwner, setRepoOwner] = useState(() => localStorage.getItem('github_booster_owner') || '');
   const [repoName, setRepoName] = useState(() => localStorage.getItem('github_booster_repo') || '');
 
@@ -129,7 +130,7 @@ function App() {
   useEffect(() => {
     const savedToken = getStoredToken();
     const savedUser = localStorage.getItem('github_booster_user');
-    
+
     if (savedToken && savedUser) {
       // User is cached, render dashboard immediately and sync in the background
       setLoading(false);
@@ -155,10 +156,10 @@ function App() {
       await fetchBoosterData(authToken);
     } catch (err: any) {
       console.error(err);
-      
+
       const isAuthError = err.message?.includes('Invalid Personal Access Token') || err.message?.includes('Unauthorized') || err.message?.includes('401');
       const isNetworkError = err.message?.includes('fetch') || err.message?.includes('Network') || err.message?.includes('rate limit') || err.message?.includes('403') || err.message?.includes('Connection');
-      
+
       if (isAuthError) {
         setError('Authentication failed. Your Personal Access Token is invalid or has expired.');
         clearStoredToken();
@@ -187,7 +188,7 @@ function App() {
 
       // 2. Refresh dashboard metrics and files
       await fetchBoosterData(authToken);
-      
+
       setConnectionStatus('connected');
       setTimeout(() => setConnectionStatus(null), 3000);
     } catch (err: any) {
@@ -203,7 +204,7 @@ function App() {
 
   const fetchBoosterData = async (authToken: string = token || '') => {
     if (!authToken) return;
-    
+
     // Always fetch local logs in parallel when on localhost
     fetchLocalLogs();
 
@@ -315,7 +316,7 @@ function App() {
 
   const handleToggleStatus = async (active: boolean) => {
     if (!token) return;
-    
+
     let remoteSuccess = true;
     try {
       await githubService.toggleWorkflow(token, active);
@@ -323,10 +324,10 @@ function App() {
       console.warn('Failed to update remote workflow status:', err);
       remoteSuccess = false;
     }
-    
+
     setIsActive(active);
     localStorage.setItem('github_booster_is_active', String(active));
-    
+
     // Sync active state to local background scheduler
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     if (isLocalhost) {
@@ -340,7 +341,7 @@ function App() {
         console.warn('Failed to sync active status to local disk:', localErr);
       }
     }
-    
+
     if (!remoteSuccess) {
       throw new Error('Offline mode: Updated local scheduler only. GitHub Actions workflow could not be updated.');
     }
@@ -359,7 +360,7 @@ function App() {
     try {
       // 1. Save to GitHub remote repository
       await githubService.saveConfig(token, newConfig);
-      
+
       // 2. If running locally, sync configuration to local disk files
       const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       if (isLocalhost) {
@@ -417,22 +418,22 @@ function App() {
             {isNetworkError ? 'Connection Error' : 'Configuration Error'}
           </h2>
           <p style={{ color: 'var(--text-secondary)', lineHeight: '1.6', fontSize: '0.875rem', margin: 0 }}>{error}</p>
-          
+
           {isNetworkError ? (
             <div style={{ display: 'flex', gap: '0.75rem', width: '100%', marginTop: '0.5rem' }}>
-              <button 
+              <button
                 onClick={() => {
                   const savedToken = getStoredToken();
                   if (savedToken) bootstrapApp(savedToken);
-                }} 
-                className="btn btn-primary" 
+                }}
+                className="btn btn-primary"
                 style={{ flex: 1 }}
               >
                 Retry Connection
               </button>
-              <button 
-                onClick={handleDisconnect} 
-                className="btn btn-secondary" 
+              <button
+                onClick={handleDisconnect}
+                className="btn btn-secondary"
                 style={{ flex: 1 }}
               >
                 Disconnect
@@ -508,6 +509,14 @@ function App() {
               </span>
             )}
             <button
+              onClick={() => navigate('/multi-account')}
+              className="btn btn-secondary"
+              style={{ padding: '0 0.8rem', fontSize: '0.75rem', gap: '0.35rem', height: '2.1rem', borderRadius: '8px' }}
+            >
+              <Settings size={12} />
+              Multi-Account
+            </button>
+            <button
               onClick={handleDisconnect}
               className="btn btn-secondary"
               style={{ padding: '0 0.8rem', fontSize: '0.75rem', gap: '0.35rem', height: '2.1rem', borderRadius: '8px' }}
@@ -556,6 +565,47 @@ function App() {
               {repoOwner}/{repoName}
             </a>
           </p>
+        </footer>
+      </div>
+    );
+  }
+
+  if (path === '/multi-account' && token && user) {
+    return (
+      <div className="app-container fade-in-up">
+        {/* Header Bar */}
+        <header style={{ backgroundColor: 'transparent', border: 'none' }}>
+          <div className="logo-container">
+            <img src="/github.png" alt="Booster Logo" style={{ width: '22px', height: '22px' }} />
+            <span className="logo-text" style={{ fontFamily: 'Cooper, serif', fontWeight: 500, letterSpacing: '-0.3px' }}>Multi-Account</span>
+          </div>
+          <div className="header-actions">
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="btn btn-primary"
+              style={{ padding: '0 0.8rem', fontSize: '0.75rem', gap: '0.35rem', height: '2.1rem', borderRadius: '8px' }}
+            >
+              <ChevronLeft size={12} />
+              Back
+            </button>
+          </div>
+        </header>
+
+        {/* Main Content Area */}
+        <main style={{ flex: 1, marginTop: '0.5rem' }}>
+          <MultiAccountManager
+            currentUser={user}
+            currentRepo={repoOwner && repoName ? { owner: repoOwner, repo: repoName } : null}
+            currentConfig={boosterConfig}
+            onAccountAdded={() => {
+              // Optionally refresh data after adding account
+            }}
+          />
+        </main>
+
+        {/* Footer */}
+        <footer>
+          <p>GitHub Activity Booster &copy; {new Date().getFullYear()}</p>
         </footer>
       </div>
     );

@@ -215,6 +215,78 @@ function runLocalScheduler() {
   checkScheduler();
 }
 
+// Multi-account scheduler for running commits every hour on all active accounts
+let multiAccountTimeout: NodeJS.Timeout | null = null;
+
+function runMultiAccountScheduler() {
+  if (multiAccountTimeout) {
+    clearTimeout(multiAccountTimeout);
+    multiAccountTimeout = null;
+  }
+
+  const checkMultiAccounts = () => {
+    try {
+      const accountsFile = path.join(process.cwd(), '.booster_accounts.json');
+      if (!fs.existsSync(accountsFile)) {
+        multiAccountTimeout = setTimeout(checkMultiAccounts, 3600000); // Check every hour
+        return;
+      }
+
+      const accountsData = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
+      const accounts = accountsData.accounts || [];
+      const now = Date.now();
+
+      for (const account of accounts) {
+        if (!account.active) continue;
+
+        const lastRun = account.lastRun || 0;
+        const hourInMs = 3600000;
+
+        // If last run was more than an hour ago, execute now
+        if (now - lastRun >= hourInMs) {
+          console.log(`[multi-account-scheduler] Running commit for ${account.id}...`);
+
+          try {
+            const env = {
+              ...process.env,
+              GIT_AUTHOR_NAME: account.user?.name || 'Booster',
+              GIT_AUTHOR_EMAIL: account.config?.email || `${account.user?.login}@users.noreply.github.com`,
+              GIT_COMMITTER_NAME: account.user?.name || 'Booster',
+              GIT_COMMITTER_EMAIL: account.config?.email || `${account.user?.login}@users.noreply.github.com`,
+            };
+
+            const logFile = path.join(process.cwd(), 'activity_log.txt');
+            if (!fs.existsSync(logFile)) {
+              fs.writeFileSync(logFile, '# GitHub Activity Booster - Activity Log\n');
+            }
+
+            const message = account.config?.message || 'chore: auto boost activity [skip ci]';
+            const dateStr = new Date().toISOString();
+            const commitMsg = `${message} [${account.id}]`;
+            fs.appendFileSync(logFile, `\nMulti-account commit for ${account.id}: ${dateStr} - ${commitMsg}`);
+
+            execSync('git add activity_log.txt', { stdio: 'pipe' });
+            execSync(`git commit -m "${commitMsg}" --no-gpg-sign`, { env, stdio: 'pipe' });
+            console.log(`[multi-account-scheduler] Commit created for ${account.id}`);
+
+            // Update last run time
+            account.lastRun = now;
+            fs.writeFileSync(accountsFile, JSON.stringify(accountsData, null, 2));
+          } catch (err: any) {
+            console.warn(`[multi-account-scheduler] Commit failed for ${account.id}:`, err.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[multi-account-scheduler] Error:', err);
+    }
+
+    multiAccountTimeout = setTimeout(checkMultiAccounts, 60000); // Check every minute
+  };
+
+  checkMultiAccounts();
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   server: {
@@ -232,8 +304,9 @@ export default defineConfig({
     {
       name: 'bulk-commit-api',
       configureServer(server) {
-        // Run scheduler on startup
+        // Run schedulers on startup
         runLocalScheduler();
+        runMultiAccountScheduler();
 
         server.middlewares.use((req, res, next) => {
           if (req.url?.startsWith('/api/save-config') && req.method === 'POST') {
@@ -454,6 +527,94 @@ export default defineConfig({
                 console.error('[bulk-commit-api] Error:', error);
                 res.write(JSON.stringify({ error: error.message }) + '\n');
                 res.end();
+              }
+            });
+          } else if (req.url?.startsWith('/api/multi-account-add') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk;
+            });
+            req.on('end', () => {
+              try {
+                const { id, user, owner, repo, config, active } = JSON.parse(body);
+
+                // Load or create accounts file
+                const accountsFile = path.join(process.cwd(), '.booster_accounts.json');
+                let accountsData: any = { accounts: [] };
+                if (fs.existsSync(accountsFile)) {
+                  accountsData = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
+                }
+
+                // Add or update account
+                const existingIndex = accountsData.accounts.findIndex((a: any) => a.id === id);
+                const accountRecord = {
+                  id,
+                  user,
+                  owner,
+                  repo,
+                  config,
+                  active,
+                  lastRun: 0,
+                };
+
+                if (existingIndex >= 0) {
+                  accountsData.accounts[existingIndex] = accountRecord;
+                } else {
+                  accountsData.accounts.push(accountRecord);
+                }
+
+                fs.writeFileSync(accountsFile, JSON.stringify(accountsData, null, 2));
+
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: true }));
+
+                // Restart scheduler to pick up new account
+                runMultiAccountScheduler();
+              } catch (error: any) {
+                console.error('[multi-account-add-api] Error:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
+              }
+            });
+          } else if (req.url?.startsWith('/api/multi-account-list') && req.method === 'GET') {
+            try {
+              const accountsFile = path.join(process.cwd(), '.booster_accounts.json');
+              let accountsData: any = { accounts: [] };
+              if (fs.existsSync(accountsFile)) {
+                accountsData = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
+              }
+
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(accountsData));
+            } catch (error: any) {
+              console.error('[multi-account-list-api] Error:', error);
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: error.message }));
+            }
+          } else if (req.url?.startsWith('/api/multi-account-remove') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk;
+            });
+            req.on('end', () => {
+              try {
+                const { id } = JSON.parse(body);
+
+                const accountsFile = path.join(process.cwd(), '.booster_accounts.json');
+                if (fs.existsSync(accountsFile)) {
+                  const accountsData = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
+                  accountsData.accounts = accountsData.accounts.filter((a: any) => a.id !== id);
+                  fs.writeFileSync(accountsFile, JSON.stringify(accountsData, null, 2));
+                }
+
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: true }));
+
+                runMultiAccountScheduler();
+              } catch (error: any) {
+                console.error('[multi-account-remove-api] Error:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
               }
             });
           } else {

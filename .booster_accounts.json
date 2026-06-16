@@ -1,0 +1,24 @@
+{
+  "accounts": [
+    {
+      "id": "dqev/activity",
+      "user": {
+        "login": "dqev",
+        "name": "Dev Chauhan",
+        "avatar_url": "https://avatars.githubusercontent.com/u/118747054?v=4",
+        "html_url": "https://github.com/dqev",
+        "email": null
+      },
+      "owner": "dqev",
+      "repo": "activity",
+      "config": {
+        "cron": "0 1 * * *",
+        "email": "devgurjar9897@gmail.com",
+        "message": "chore: auto boost activity [skip ci]",
+        "dailyCommitCount": 4
+      },
+      "active": true,
+      "lastRun": 1781600381792
+    }
+  ]
+}
