@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import https from 'https'
 
 // Cron parser for local scheduler
 function getNextCronRunDate(cron: string, baseDate: Date = new Date()): Date | null {
@@ -175,6 +176,7 @@ function runLocalScheduler() {
         const msgFile = path.join(process.cwd(), '.booster_msg');
         const message = fs.existsSync(msgFile) ? fs.readFileSync(msgFile, 'utf8').trim() : 'chore: auto boost activity [skip ci]';
 
+        let originalRemote = '';
         try {
           const logFile = path.join(process.cwd(), 'activity_log.txt');
           if (!fs.existsSync(logFile)) {
@@ -193,11 +195,63 @@ function runLocalScheduler() {
             GIT_COMMITTER_EMAIL: email,
           };
 
+          // Try to setup authenticated remote for push
+          const tokenFile = path.join(process.cwd(), '.booster_token');
+          if (fs.existsSync(tokenFile)) {
+            const token = fs.readFileSync(tokenFile, 'utf8').trim();
+            if (token) {
+              try {
+                originalRemote = execSync('git remote get-url origin', { encoding: 'utf8' }).trim();
+                const cleanUrl = originalRemote.replace(/\.git$/, '');
+                const match = cleanUrl.match(/github\.com[/:]([^/]+)\/([^/]+)$/);
+                if (match) {
+                  const owner = match[1];
+                  const repo = match[2];
+                  const authenticatedRemote = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+                  execSync(`git remote set-url origin "${authenticatedRemote}"`);
+
+                  // Fetch and rebase to prevent out-of-sync failures
+                  try {
+                    execSync('git fetch origin');
+                    const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+                    execSync(`git rebase origin/${currentBranch} --autostash -X theirs`);
+                  } catch (rebaseErr: any) {
+                    console.warn('[local-scheduler] Rebase failed, aborting rebase:', rebaseErr.message);
+                    try {
+                      execSync('git rebase --abort');
+                    } catch (abortErr) {}
+                  }
+                }
+              } catch (remoteErr: any) {
+                console.warn('[local-scheduler] Setup of authenticated remote failed:', remoteErr.message);
+              }
+            }
+          }
+
           execSync('git add activity_log.txt');
           execSync(`git commit -m "${commitMsg}" --no-gpg-sign`, { env });
           console.log(`[local-scheduler] Successfully created local commit for scheduled run ${nextRun.toLocaleString()}.`);
+
+          // Push the commit if we have remote credentials configured
+          if (originalRemote) {
+            try {
+              const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+              execSync(`git push -u origin "${currentBranch}"`);
+              console.log('[local-scheduler] Successfully pushed commit to origin.');
+            } catch (pushErr: any) {
+              console.warn('[local-scheduler] Push failed:', pushErr.message);
+            }
+          }
         } catch (err: any) {
           console.error('[local-scheduler] Commit execution failed:', err.message);
+        } finally {
+          if (originalRemote) {
+            try {
+              execSync(`git remote set-url origin "${originalRemote}"`);
+            } catch (restoreErr: any) {
+              console.warn('[local-scheduler] Failed to restore remote URL:', restoreErr.message);
+            }
+          }
         }
 
         // Run scheduler check again immediately to check if there are other catch-up runs
@@ -215,6 +269,108 @@ function runLocalScheduler() {
   checkScheduler();
 }
 
+// ─── GitHub API helper for multi-account commits ────────────────────────────
+
+/** Decode token stored as base64(reverse(token)) */
+function decodeAccountToken(encoded: string): string {
+  const reversed = Buffer.from(encoded, 'base64').toString('utf8');
+  return reversed.split('').reverse().join('');
+}
+
+/** Make an HTTPS request to the GitHub API and return parsed JSON */
+function githubApiRequest(
+  method: string,
+  apiPath: string,
+  token: string,
+  body?: object
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : undefined;
+    const options: https.RequestOptions = {
+      hostname: 'api.github.com',
+      path: apiPath,
+      method,
+      headers: {
+        'Authorization': `token ${token}`,
+        'User-Agent': 'github-activity-booster/1.0',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, body: data ? JSON.parse(data) : {} });
+        } catch (e) {
+          resolve({ status: res.statusCode, body: data });
+        }
+      });
+    });
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+/**
+ * Push a commit to an account's own GitHub repo via the GitHub Contents API.
+ * This creates/updates a file directly in the remote repo without touching
+ * the local git repository at all.
+ */
+async function pushCommitViaApi(
+  token: string,
+  owner: string,
+  repo: string,
+  commitMessage: string,
+  authorName: string,
+  authorEmail: string
+): Promise<void> {
+  const filePath = 'activity_log.txt';
+  const apiFilePath = `/repos/${owner}/${repo}/contents/${filePath}`;
+
+  // 1. GET current file to obtain SHA (needed for updates)
+  const getResult = await githubApiRequest('GET', apiFilePath, token);
+  let currentSha: string | undefined;
+  let currentContent = '# GitHub Activity Booster - Activity Log\n';
+
+  if (getResult.status === 200 && getResult.body?.sha) {
+    currentSha = getResult.body.sha;
+    // Decode base64 content from GitHub
+    try {
+      currentContent = Buffer.from(getResult.body.content.replace(/\n/g, ''), 'base64').toString('utf8');
+    } catch (e) {
+      currentContent = '# GitHub Activity Booster - Activity Log\n';
+    }
+  } else if (getResult.status === 404) {
+    // File doesn't exist yet — we'll create it
+    currentSha = undefined;
+  } else if (getResult.status === 401 || getResult.status === 403) {
+    throw new Error(`Auth failed for ${owner}/${repo}: HTTP ${getResult.status}`);
+  }
+
+  // 2. Append new log entry
+  const dateStr = new Date().toISOString();
+  const newContent = currentContent.trimEnd() + `\nAuto-commit for ${owner}/${repo}: ${dateStr} - ${commitMessage}\n`;
+  const encodedContent = Buffer.from(newContent).toString('base64');
+
+  // 3. PUT the updated file
+  const putBody: any = {
+    message: commitMessage,
+    content: encodedContent,
+    author: { name: authorName, email: authorEmail },
+    committer: { name: authorName, email: authorEmail },
+  };
+  if (currentSha) putBody.sha = currentSha;
+
+  const putResult = await githubApiRequest('PUT', apiFilePath, token, putBody);
+  if (putResult.status !== 200 && putResult.status !== 201) {
+    throw new Error(`GitHub API PUT failed: HTTP ${putResult.status} - ${JSON.stringify(putResult.body?.message || putResult.body)}`);
+  }
+}
+
 // Multi-account scheduler for running commits every hour on all active accounts
 let multiAccountTimeout: NodeJS.Timeout | null = null;
 
@@ -224,58 +380,54 @@ function runMultiAccountScheduler() {
     multiAccountTimeout = null;
   }
 
-  const checkMultiAccounts = () => {
+  const checkMultiAccounts = async () => {
     try {
       const accountsFile = path.join(process.cwd(), '.booster_accounts.json');
       if (!fs.existsSync(accountsFile)) {
-        multiAccountTimeout = setTimeout(checkMultiAccounts, 3600000); // Check every hour
+        multiAccountTimeout = setTimeout(checkMultiAccounts, 3600000);
         return;
       }
 
       const accountsData = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
       const accounts = accountsData.accounts || [];
       const now = Date.now();
+      let anyUpdated = false;
 
       for (const account of accounts) {
         if (!account.active) continue;
+        if (!account.token) {
+          console.warn(`[multi-account-scheduler] Skipping ${account.id}: no token stored.`);
+          continue;
+        }
 
         const lastRun = account.lastRun || 0;
-        const hourInMs = 3600000;
+        // Read cron from account config if available, else default to hourly
+        const cron = account.config?.cron || '0 * * * *';
+        const nextRun = getNextCronRunDate(cron, new Date(lastRun === 0 ? Date.now() - 3700000 : lastRun));
 
-        // If last run was more than an hour ago, execute now
-        if (now - lastRun >= hourInMs) {
-          console.log(`[multi-account-scheduler] Running commit for ${account.id}...`);
+        if (!nextRun || now < nextRun.getTime()) continue;
 
-          try {
-            const env = {
-              ...process.env,
-              GIT_AUTHOR_NAME: account.user?.name || 'Booster',
-              GIT_AUTHOR_EMAIL: account.config?.email || `${account.user?.login}@users.noreply.github.com`,
-              GIT_COMMITTER_NAME: account.user?.name || 'Booster',
-              GIT_COMMITTER_EMAIL: account.config?.email || `${account.user?.login}@users.noreply.github.com`,
-            };
+        console.log(`[multi-account-scheduler] Running API commit for ${account.id}...`);
 
-            const logFile = path.join(process.cwd(), 'activity_log.txt');
-            if (!fs.existsSync(logFile)) {
-              fs.writeFileSync(logFile, '# GitHub Activity Booster - Activity Log\n');
-            }
+        try {
+          const decodedToken = decodeAccountToken(account.token);
+          const authorName = account.user?.name || account.user?.login || 'Booster';
+          const authorEmail = account.config?.email || `${account.user?.login}@users.noreply.github.com`;
+          const message = account.config?.message || 'chore: auto boost activity [skip ci]';
+          const commitMsg = `${message} [scheduled]`;
 
-            const message = account.config?.message || 'chore: auto boost activity [skip ci]';
-            const dateStr = new Date().toISOString();
-            const commitMsg = `${message} [${account.id}]`;
-            fs.appendFileSync(logFile, `\nMulti-account commit for ${account.id}: ${dateStr} - ${commitMsg}`);
+          await pushCommitViaApi(decodedToken, account.owner, account.repo, commitMsg, authorName, authorEmail);
+          console.log(`[multi-account-scheduler] ✅ Commit pushed to ${account.owner}/${account.repo}`);
 
-            execSync('git add activity_log.txt', { stdio: 'pipe' });
-            execSync(`git commit -m "${commitMsg}" --no-gpg-sign`, { env, stdio: 'pipe' });
-            console.log(`[multi-account-scheduler] Commit created for ${account.id}`);
-
-            // Update last run time
-            account.lastRun = now;
-            fs.writeFileSync(accountsFile, JSON.stringify(accountsData, null, 2));
-          } catch (err: any) {
-            console.warn(`[multi-account-scheduler] Commit failed for ${account.id}:`, err.message);
-          }
+          account.lastRun = nextRun.getTime();
+          anyUpdated = true;
+        } catch (err: any) {
+          console.warn(`[multi-account-scheduler] ❌ Failed for ${account.id}:`, err.message);
         }
+      }
+
+      if (anyUpdated) {
+        fs.writeFileSync(accountsFile, JSON.stringify(accountsData, null, 2));
       }
     } catch (err) {
       console.error('[multi-account-scheduler] Error:', err);
@@ -295,7 +447,8 @@ export default defineConfig({
         '**/activity_log.txt',
         '**/.git/**',
         '**/dist/**',
-        '**/node_modules/**'
+        '**/node_modules/**',
+        '**/.booster_repos/**'
       ]
     }
   },
@@ -316,7 +469,7 @@ export default defineConfig({
             });
             req.on('end', () => {
               try {
-                const { email, message, cron } = JSON.parse(body);
+                const { email, message, cron, token } = JSON.parse(body);
 
                 // Update local .booster_email
                 const emailFile = path.join(process.cwd(), '.booster_email');
@@ -325,6 +478,12 @@ export default defineConfig({
                 // Update local .booster_msg
                 const msgFile = path.join(process.cwd(), '.booster_msg');
                 fs.writeFileSync(msgFile, message);
+
+                // Update local .booster_token if provided
+                if (token) {
+                  const tokenFile = path.join(process.cwd(), '.booster_token');
+                  fs.writeFileSync(tokenFile, token);
+                }
 
                 // Update local auto-commit.yml
                 const workflowFile = path.join(process.cwd(), '.github/workflows/auto-commit.yml');
@@ -536,7 +695,7 @@ export default defineConfig({
             });
             req.on('end', () => {
               try {
-                const { id, user, owner, repo, config, active } = JSON.parse(body);
+                const { id, token, user, owner, repo, config, active } = JSON.parse(body);
 
                 // Load or create accounts file
                 const accountsFile = path.join(process.cwd(), '.booster_accounts.json');
@@ -547,14 +706,17 @@ export default defineConfig({
 
                 // Add or update account
                 const existingIndex = accountsData.accounts.findIndex((a: any) => a.id === id);
+                const existingAccount = existingIndex >= 0 ? accountsData.accounts[existingIndex] : null;
+
                 const accountRecord = {
                   id,
+                  token: token !== undefined ? token : (existingAccount ? existingAccount.token : ''),
                   user,
                   owner,
                   repo,
                   config,
                   active,
-                  lastRun: 0,
+                  lastRun: existingAccount ? (existingAccount.lastRun || 0) : 0,
                 };
 
                 if (existingIndex >= 0) {
@@ -617,6 +779,72 @@ export default defineConfig({
                 res.end(JSON.stringify({ error: error.message }));
               }
             });
+          } else if (req.url?.startsWith('/api/multi-account-push-all') && req.method === 'POST') {
+            res.writeHead(200, {
+              'Content-Type': 'application/x-ndjson',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+            });
+
+            (async () => {
+              try {
+                const accountsFile = path.join(process.cwd(), '.booster_accounts.json');
+                if (!fs.existsSync(accountsFile)) {
+                  res.write(JSON.stringify({ status: 'error', message: 'No accounts configured.' }) + '\n');
+                  res.end();
+                  return;
+                }
+
+                const accountsData = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
+                const accounts = accountsData.accounts || [];
+                const activeAccounts = accounts.filter((a: any) => a.active);
+
+                if (activeAccounts.length === 0) {
+                  res.write(JSON.stringify({ status: 'error', message: 'No active accounts found.' }) + '\n');
+                  res.end();
+                  return;
+                }
+
+                res.write(JSON.stringify({ status: 'start', total: activeAccounts.length }) + '\n');
+
+                for (let i = 0; i < activeAccounts.length; i++) {
+                  const account = activeAccounts[i];
+                  res.write(JSON.stringify({ status: 'processing', index: i, accountId: account.id, message: `Committing via GitHub API for ${account.id}...` }) + '\n');
+
+                  try {
+                    if (!account.token) {
+                      throw new Error('No token stored for this account. Re-add the account to save the token.');
+                    }
+
+                    const decodedToken = decodeAccountToken(account.token);
+                    const authorName = account.user?.name || account.user?.login || 'Booster';
+                    const authorEmail = account.config?.email || `${account.user?.login}@users.noreply.github.com`;
+                    const message = account.config?.message || 'chore: auto boost activity [skip ci]';
+                    const commitMsg = `${message} [manual boost]`;
+
+                    await pushCommitViaApi(decodedToken, account.owner, account.repo, commitMsg, authorName, authorEmail);
+
+                    // Update last run time in accountsData
+                    const idx = accountsData.accounts.findIndex((a: any) => a.id === account.id);
+                    if (idx >= 0) accountsData.accounts[idx].lastRun = Date.now();
+
+                    res.write(JSON.stringify({ status: 'success', index: i, accountId: account.id }) + '\n');
+                  } catch (err: any) {
+                    console.error(`[multi-account-push-all] Failed for ${account.id}:`, err.message);
+                    res.write(JSON.stringify({ status: 'failed', index: i, accountId: account.id, error: err.message }) + '\n');
+                  }
+                }
+
+                // Save updated accounts (lastRun timestamps)
+                fs.writeFileSync(accountsFile, JSON.stringify(accountsData, null, 2));
+                res.write(JSON.stringify({ status: 'done' }) + '\n');
+                res.end();
+              } catch (error: any) {
+                console.error('[multi-account-push-all] Error:', error);
+                res.write(JSON.stringify({ status: 'error', message: error.message }) + '\n');
+                res.end();
+              }
+            })()
           } else {
             next();
           }

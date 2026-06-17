@@ -245,7 +245,7 @@ function App() {
             await fetch('/api/save-config', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(configData),
+              body: JSON.stringify({ ...configData, token: authToken }),
             });
           }
           await fetch('/api/save-status', {
@@ -368,7 +368,7 @@ function App() {
           await fetch('/api/save-config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newConfig),
+            body: JSON.stringify({ ...newConfig, token }),
           });
         } catch (localErr) {
           console.warn('Failed to sync config to local disk:', localErr);
@@ -597,6 +597,7 @@ function App() {
             currentUser={user}
             currentRepo={repoOwner && repoName ? { owner: repoOwner, repo: repoName } : null}
             currentConfig={boosterConfig}
+            token={token}
             onAccountAdded={() => {
               // Optionally refresh data after adding account
             }}

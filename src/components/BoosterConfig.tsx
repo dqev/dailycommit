@@ -249,6 +249,7 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
           {/* Mode Tabs */}
           <div style={{
             display: 'flex',
+            flexWrap: 'wrap',
             gap: '0.375rem',
             marginBottom: '0.875rem',
             background: 'rgba(0,0,0,0.25)',
@@ -263,7 +264,8 @@ export const BoosterConfig: React.FC<BoosterConfigProps> = ({ config, onSave, lo
                 onClick={() => handleModeChange(m)}
                 disabled={loading}
                 style={{
-                  flex: 1,
+                  flex: '1 1 auto',
+                  minWidth: '70px',
                   padding: '0.4rem 0.5rem',
                   borderRadius: '7px',
                   border: 'none',
