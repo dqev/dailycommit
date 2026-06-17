@@ -601,6 +601,7 @@ function App() {
             onAccountAdded={() => {
               // Optionally refresh data after adding account
             }}
+            onAccountSwitch={handleConnect}
           />
         </main>
 

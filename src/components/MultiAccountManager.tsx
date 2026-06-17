@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Trash2, Power, Refresh, Rocket } from 'reicon-react';
+import { Trash2, Power, Refresh, Rocket} from 'reicon-react';
 import { multiAccountService } from '../services/multi-account';
 import { encodeToken, decodeToken } from '../services/github';
 import type { MultiAccountConfig, GitHubUser, BoosterConfig } from '../types';
@@ -10,6 +10,7 @@ interface MultiAccountManagerProps {
     currentConfig?: BoosterConfig | null;
     token?: string | null;
     onAccountAdded?: () => void;
+    onAccountSwitch?: (token: string, owner: string, repo: string, user: GitHubUser) => void;
 }
 
 interface Toast {
@@ -24,6 +25,7 @@ export function MultiAccountManager({
     currentConfig,
     token,
     onAccountAdded,
+    onAccountSwitch,
 }: MultiAccountManagerProps) {
     const [accounts, setAccounts] = useState<MultiAccountConfig[]>([]);
     const [loading, setLoading] = useState(true);
@@ -144,6 +146,22 @@ export function MultiAccountManager({
                 }
             }
         );
+    };
+
+    const handleSwitchAccount = async (account: MultiAccountConfig) => {
+        if (!account.token) {
+            showToast('Cannot switch: No token stored for this account.', 'error');
+            return;
+        }
+        const tokenVal = decodeToken(account.token);
+        if (!tokenVal) {
+            showToast('Cannot switch: Failed to decode token.', 'error');
+            return;
+        }
+        if (onAccountSwitch) {
+            showToast(`🔌 Switching session to ${account.id}...`, 'info');
+            onAccountSwitch(tokenVal, account.owner, account.repo, account.user);
+        }
     };
 
     /** Save a token for any account, using current token or a manually entered PAT */
@@ -557,6 +575,15 @@ export function MultiAccountManager({
                                             <Power size={12} />
                                             {account.active ? 'Active' : 'Inactive'}
                                         </button>
+                                        {!isCurrentAccount && hasToken && (
+                                            <button
+                                                onClick={() => handleSwitchAccount(account)}
+                                                className="mam-action-btn mam-action-switch"
+                                                title="Switch active session to this account"
+                                            >
+                                                🔌 Switch
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => handleRemoveAccount(account.id)}
                                             className="mam-action-btn mam-action-remove"
@@ -928,6 +955,12 @@ export function MultiAccountManager({
                     color: #ff7070;
                 }
                 .mam-action-remove:hover { background: rgba(239, 68, 68, 0.15); }
+                .mam-action-switch {
+                    background: rgba(6, 182, 212, 0.12);
+                    border-color: rgba(6, 182, 212, 0.3);
+                    color: var(--accent-cyan);
+                }
+                .mam-action-switch:hover { background: rgba(6, 182, 212, 0.22); }
                 .mam-action-save {
                     background: rgba(16, 185, 129, 0.15);
                     border-color: rgba(16, 185, 129, 0.3);
