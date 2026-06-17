@@ -1,91 +1,155 @@
-# Production Deployment Guide
+# Production Setup Guide
 
-## The Problem
+## Quick Start (Vercel Deployment)
 
-Your app works in localhost but not in production because:
+1. **Deploy to Vercel**
+   ```bash
+   npm i -g vercel
+   vercel
+   ```
 
-1. **No Backend Server**: The app uses API endpoints (`/api/*`) that only exist in development mode. Vercel deploys the frontend as a static SPA - there's no server to handle these requests.
+2. **Configure Environment Variables** in Vercel Dashboard:
 
-2. **GitHub Actions Runs Separately**: The auto-commit workflow runs on GitHub's servers, not in your browser. Each repository needs its own workflow configured.
+   | Variable | Description | Example |
+   |----------|-------------|---------|
+   | `SCHEDULER_OWNER` | Your GitHub username | `johndoe` |
+   | `SCHEDULER_REPO` | Name of repo to store scheduler config | `my-scheduler` |
+   | `GITHUB_TOKEN` | GitHub PAT with repo scope | `ghp_xxx` |
+   | `CRON_SECRET` | Optional: secret for cron auth | `mysecret` |
 
-3. **Tokens Not Shared**: GitHub Actions workflows need their own tokens - they can't access tokens stored in browser localStorage.
+3. **Create the Scheduler Repository**
+   - Create a new private repo on GitHub (e.g., `my-scheduler`)
+   - Add a file called `accounts.json` with content: `[]`
+   - Give the GITHUB_TOKEN push access to this repo
+
+4. **Enable Cron Jobs** in Vercel Dashboard
+   - Go to Settings → Cron Jobs
+   - The cron is already configured in `vercel.json`
 
 ---
 
-## Solution: Deploy with Backend Server
+## How the Real Scheduler Works
 
-### Option 1: Deploy to Railway/Render/DigitalOcean (Recommended)
+### Architecture
 
-This backend serves both the frontend AND provides the API endpoints.
-
-```bash
-# Build the frontend first
-npm run build
-
-# Deploy the server.js to Railway/Render/DigitalOcean
-# Set environment variables:
-# - PORT=3001
-# - SCHEDULER_ENABLED=true
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Vercel (Serverless)                      │
+│  ┌──────────────────┐    ┌────────────────────────────────┐ │
+│  │   Frontend SPA   │    │   API Routes                   │ │
+│  │   (React App)    │    │   - scheduler-config (cron)    │ │
+│  └────────┬─────────┘    │   - other endpoints            │ │
+│           │              └────────────────┬───────────────┘ │
+└───────────┼───────────────────────────────┼─────────────────┘
+            │                               │
+            ▼                               ▼
+    ┌────────────────┐            ┌─────────────────────┐
+    │ GitHub Browser │            │  Scheduler Repo     │
+    │ (Direct API)   │            │  (accounts.json)    │
+    └────────────────┘            └──────────┬──────────┘
+                                             │
+                                             ▼
+                                   ┌─────────────────────┐
+                                   │  Target Repos       │
+                                   │  (activity_log.txt) │
+                                   └─────────────────────┘
 ```
 
-### Option 2: Deploy Backend Separately on Vercel
+### Flow
 
-You can deploy the server as a Vercel Serverless Function:
+1. **Add Account** → Frontend calls `/api/scheduler-config` → Saves to `accounts.json` in scheduler repo
+2. **Cron Runs** → Vercel calls `/api/scheduler-config` at scheduled times → Reads accounts → Pushes commits to each repo
+3. **Each commit** → Uses GitHub Contents API to update `activity_log.txt`
 
-1. Install Vercel CLI: `npm i -g vercel`
-2. Create `api/index.js` with the server logic
-3. Deploy with `vercel`
+### Cron Schedule
 
----
+Currently set to run **4 times daily** at 6:00, 10:00, 14:00, and 18:00 UTC:
 
-## How Multi-Account Auto-Commits Actually Work
-
-For **each account/repository** you want to auto-commit to:
-
-1. **Connect the account** in the app (enter GitHub PAT + owner/repo)
-2. **Initialize the workflow** - this pushes `.github/workflows/auto-commit.yml` to that repository
-3. **GitHub Actions handles the rest** - it runs on a schedule and makes commits
-
-The app stores accounts in localStorage so you can manage them, but each repository's workflow runs independently on GitHub.
+```json
+"crons": [
+  { "path": "/api/scheduler-config", "schedule": "0 6,10,14,18 * * *" }
+]
+```
 
 ---
 
-## Key Points for Production
+## Setting Up Multiple Accounts
 
-### Each Repository Needs:
-- `.github/workflows/auto-commit.yml` - the workflow file
-- `.booster_email` - email for commit attribution  
-- `.booster_msg` - commit message
+### Option 1: Via Frontend
 
-### To Initialize a Repository:
-1. Connect account with a GitHub PAT that has repo access
-2. Click "Initialize Auto-Committer Workflow" 
-3. The app will push the required files via GitHub API
+1. Connect a GitHub account in the app
+2. Go to Multi-Account Manager
+3. Add the account to the scheduler
 
-### For Multiple Accounts:
-Each account = one GitHub repository with the workflow configured.
+### Option 2: Manual Setup
+
+Edit `accounts.json` directly in your scheduler repo:
+
+```json
+[
+  {
+    "id": "owner/repo1",
+    "owner": "owner",
+    "repo": "repo1",
+    "token": "encoded_token_here",
+    "user": { "login": "owner", "name": "Owner Name" },
+    "config": {
+      "email": "owner@email.com",
+      "message": "chore: daily boost [skip ci]"
+    },
+    "active": true
+  }
+]
+```
 
 ---
 
-## Quick Fix for Current Deployment
+## Environment Variables Reference
 
-If you just want the app working without rebuilding:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SCHEDULER_OWNER` | Yes | Your GitHub username |
+| `SCHEDULER_REPO` | Yes | Repo to store scheduler config |
+| `GITHUB_TOKEN` | Yes | GitHub PAT with `repo` scope |
+| `CRON_SECRET` | No | Secret to protect cron endpoint |
+| `NODE_ENV` | Auto | Set to `production` in Vercel |
 
-1. **Deploy to Railway** (free tier available): https://railway.app
-2. Connect your GitHub repo
-3. Set `SCHEDULER_ENABLED=true` in environment variables
-4. Point your domain to the deployed server
+### Creating a GitHub Token
 
-The server will serve the frontend AND handle the API requests.
+1. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Click "Generate new token (classic)"
+3. Select scopes: `repo` (full control)
+4. Copy the token and add to Vercel
 
 ---
 
-## Development vs Production
+## Troubleshooting
 
-| Feature | Localhost | Production |
-|---------|-----------|------------|
-| API endpoints | ✅ Works (dev server) | ❌ Needs backend |
-| localStorage | ✅ Works | ✅ Works (but limited) |
-| Multi-account push | ✅ Via API | ✅ Via server API |
-| Auto-scheduler | ⚠️ Not real | ✅ Runs on server |
-| GitHub Actions | ✅ Per-repo | ✅ Per-repo |
+### "Scheduler not configured"
+- Check that `SCHEDULER_OWNER`, `SCHEDULER_REPO`, and `GITHUB_TOKEN` are set in Vercel env vars
+
+### "Failed to get file: 404"
+- Create the `accounts.json` file in your scheduler repo with content: `[]`
+
+### Commits not appearing
+- Check the Vercel function logs in Dashboard → Functions
+- Verify the target repo has an `activity_log.txt` file
+- Ensure the token has push access to the target repo
+
+### Rate Limiting
+- GitHub API allows 5000 requests/hour for authenticated requests
+- The scheduler is designed to make minimal API calls (1-2 per account)
+
+---
+
+## Local Development
+
+```bash
+# Run the app
+npm run dev
+
+# Test the scheduler endpoint locally
+curl -X POST http://localhost:5173/api/scheduler-config \
+  -H "Content-Type: application/json" \
+  -d '{"action": "list"}'
+```
