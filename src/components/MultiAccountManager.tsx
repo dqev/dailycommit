@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Trash2, Power, Refresh, Rocket} from 'reicon-react';
+import { Trash2, Power, Refresh, Rocket, Refresh23} from 'reicon-react';
 import { multiAccountService } from '../services/multi-account';
 import { encodeToken, decodeToken } from '../services/github';
 import type { MultiAccountConfig, GitHubUser, BoosterConfig } from '../types';
@@ -581,7 +581,7 @@ export function MultiAccountManager({
                                                 className="mam-action-btn mam-action-switch"
                                                 title="Switch active session to this account"
                                             >
-                                                🔌 Switch
+                                                <Refresh23 size={12} />Switch
                                             </button>
                                         )}
                                         <button
