@@ -228,9 +228,8 @@ function runLocalScheduler() {
             }
           }
 
-          execSync('git add activity_log.txt');
-          execSync(`git commit -m "${commitMsg}" --no-gpg-sign`, { env });
-          console.log(`[local-scheduler] Successfully created local commit for scheduled run ${nextRun.toLocaleString()}.`);
+          execSync(`git commit --allow-empty -m "${commitMsg}" --no-gpg-sign`, { env });
+          console.log(`[local-scheduler] Successfully created empty commit for scheduled run ${nextRun.toLocaleString()}.`);
 
           // Push the commit if we have remote credentials configured
           if (originalRemote) {
@@ -648,8 +647,7 @@ export default defineConfig({
                     const dateStr = new Date().toISOString();
                     const commitMsg = `${message} [boost ${i + 1}/${count}]`;
                     fs.appendFileSync(logFile, `\nBulk commit ${i + 1}/${count}: ${dateStr} - ${commitMsg}`);
-                    execSync('git add activity_log.txt');
-                    execSync(`git commit -m "${commitMsg}" --no-gpg-sign`, { env });
+                    execSync(`git commit --allow-empty -m "${commitMsg}" --no-gpg-sign`, { env });
                     
                     // Stream current progress to the browser
                     res.write(JSON.stringify({ status: 'committing', progress: i + 1 }) + '\n');

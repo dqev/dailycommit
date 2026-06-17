@@ -117,14 +117,9 @@ ${jitterStep}
           git config --global user.name "\${{ github.actor }}"
           git config --global user.email "$EMAIL"
 
-          git add activity_log.txt
-
-          if ! git diff --quiet || ! git diff --staged --quiet; then
-            git commit -m "$MSG"
-            git push
-          else
-            echo "No changes to commit."
-          fi
+          # Make an empty commit to avoid committing gitignored activity_log.txt
+          git commit --allow-empty -m "$MSG"
+          git push
 `;
 }
 

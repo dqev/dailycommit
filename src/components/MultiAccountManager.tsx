@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Trash2, Power, Refresh, Rocket } from 'reicon-react';
 import { multiAccountService } from '../services/multi-account';
-import { encodeToken } from '../services/github';
+import { encodeToken, decodeToken } from '../services/github';
 import type { MultiAccountConfig, GitHubUser, BoosterConfig } from '../types';
 
 interface MultiAccountManagerProps {
@@ -245,6 +245,80 @@ export function MultiAccountManager({
         });
     };
 
+    const pushCommitViaClientApi = async (
+        token: string,
+        owner: string,
+        repo: string,
+        commitMessage: string,
+        authorName: string,
+        authorEmail: string
+    ) => {
+        const filePath = 'activity_log.txt';
+        const apiFilePath = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+
+        // 1. GET current file to obtain SHA (needed for updates)
+        const getRes = await fetch(apiFilePath, {
+            headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json',
+            }
+        });
+
+        let currentSha: string | undefined;
+        let currentContent = '# GitHub Activity Booster - Activity Log\n';
+
+        if (getRes.status === 200) {
+            const data = await getRes.json();
+            currentSha = data.sha;
+            try {
+                // Decode base64 content safely dealing with UTF-8
+                const base64Clean = data.content.replace(/\s/g, '');
+                currentContent = decodeURIComponent(escape(atob(base64Clean)));
+            } catch (e) {
+                try {
+                    currentContent = atob(data.content.replace(/\s/g, ''));
+                } catch (err) {
+                    currentContent = '# GitHub Activity Booster - Activity Log\n';
+                }
+            }
+        } else if (getRes.status === 404) {
+            currentSha = undefined;
+        } else if (getRes.status === 401 || getRes.status === 403) {
+            throw new Error(`Auth failed: HTTP ${getRes.status}`);
+        } else {
+            throw new Error(`Failed to read file: HTTP ${getRes.status}`);
+        }
+
+        // 2. Append new log entry
+        const dateStr = new Date().toISOString();
+        const newContent = currentContent.trimEnd() + `\nAuto-commit for ${owner}/${repo}: ${dateStr} - ${commitMessage}\n`;
+        const encodedContent = btoa(unescape(encodeURIComponent(newContent)));
+
+        // 3. PUT the updated file
+        const putBody = {
+            message: commitMessage,
+            content: encodedContent,
+            sha: currentSha,
+            author: { name: authorName, email: authorEmail },
+            committer: { name: authorName, email: authorEmail }
+        };
+
+        const putRes = await fetch(apiFilePath, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(putBody),
+        });
+
+        if (!putRes.ok) {
+            const errData = await putRes.json().catch(() => ({ message: `HTTP ${putRes.status}` }));
+            throw new Error(errData.message || `HTTP ${putRes.status}`);
+        }
+    };
+
     const handlePushOneToAll = () => {
         const activeAccounts = accounts.filter(a => a.active);
         if (activeAccounts.length === 0) {
@@ -267,44 +341,88 @@ export function MultiAccountManager({
                 });
                 setPushStatus(initialProgress);
 
-                try {
-                    const response = await fetch('/api/multi-account-push-all', { method: 'POST' });
-                    if (!response.body) throw new Error('No readable stream in response');
+                const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
+                if (isLocalhost) {
+                    try {
+                        const response = await fetch('/api/multi-account-push-all', { method: 'POST' });
+                        if (!response.body) throw new Error('No readable stream in response');
 
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || '';
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let buffer = '';
 
-                        for (const line of lines) {
-                            if (!line.trim()) continue;
-                            try {
-                                const chunk = JSON.parse(line);
-                                if (chunk.status === 'processing') {
-                                    setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'syncing' } }));
-                                } else if (chunk.status === 'success') {
-                                    setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'success' } }));
-                                } else if (chunk.status === 'failed') {
-                                    setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'failed', error: chunk.error } }));
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            buffer += decoder.decode(value, { stream: true });
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop() || '';
+
+                            for (const line of lines) {
+                                if (!line.trim()) continue;
+                                try {
+                                    const chunk = JSON.parse(line);
+                                    if (chunk.status === 'processing') {
+                                        setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'syncing' } }));
+                                    } else if (chunk.status === 'success') {
+                                        setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'success' } }));
+                                    } else if (chunk.status === 'failed') {
+                                        setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'failed', error: chunk.error } }));
+                                    }
+                                } catch (e) {
+                                    console.error('Failed parsing NDJSON:', e);
                                 }
-                            } catch (e) {
-                                console.error('Failed parsing NDJSON:', e);
                             }
                         }
-                    }
 
-                    showToast('✅ Push completed for all accounts!', 'success');
-                    await loadAccounts();
-                    setTimeout(() => setPushingAll(false), 1800);
-                } catch (err: any) {
-                    showToast('❌ Error: ' + err.message, 'error');
-                    setPushingAll(false);
+                        showToast('✅ Push completed for all accounts!', 'success');
+                        await loadAccounts();
+                        setTimeout(() => setPushingAll(false), 1800);
+                    } catch (err: any) {
+                        showToast('❌ Error: ' + err.message, 'error');
+                        setPushingAll(false);
+                    }
+                } else {
+                    // Production client-side direct push fallback using GitHub API
+                    try {
+                        for (let i = 0; i < activeAccounts.length; i++) {
+                            const account = activeAccounts[i];
+                            setPushStatus(prev => ({ ...prev, [account.id]: { status: 'syncing' } }));
+
+                            try {
+                                if (!account.token) {
+                                    throw new Error('No token stored for this account.');
+                                }
+
+                                const tokenVal = decodeToken(account.token);
+                                if (!tokenVal) {
+                                    throw new Error('Failed to decode token.');
+                                }
+
+                                const authorName = account.user?.name || account.user?.login || 'Booster';
+                                const authorEmail = account.config?.email || `${account.user?.login}@users.noreply.github.com`;
+                                const message = account.config?.message || 'chore: auto boost activity [skip ci]';
+                                const commitMsg = `${message} [manual boost]`;
+
+                                await pushCommitViaClientApi(tokenVal, account.owner, account.repo, commitMsg, authorName, authorEmail);
+
+                                // Update last run time client-side
+                                multiAccountService.updateLastRun(account.id, Date.now());
+                                setPushStatus(prev => ({ ...prev, [account.id]: { status: 'success' } }));
+                            } catch (err: any) {
+                                console.error(`[client-push] Failed for ${account.id}:`, err.message);
+                                setPushStatus(prev => ({ ...prev, [account.id]: { status: 'failed', error: err.message } }));
+                            }
+                        }
+
+                        showToast('✅ Push completed for all accounts!', 'success');
+                        await loadAccounts();
+                        setTimeout(() => setPushingAll(false), 2500);
+                    } catch (err: any) {
+                        showToast('❌ Error: ' + err.message, 'error');
+                        setPushingAll(false);
+                    }
                 }
             }
         );
