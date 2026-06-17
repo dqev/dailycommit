@@ -8,11 +8,5 @@
       "source": "/(.*)",
       "destination": "/index.html"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/scheduler-config",
-      "schedule": "0 6,10,14,18 * * *"
-    }
   ]
 }
