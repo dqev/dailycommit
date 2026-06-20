@@ -84,6 +84,16 @@ export const multiAccountService = {
     }
   },
 
+  // Update number of commits to push for this account
+  updateCommitCount(accountId: string, commitCount: number): void {
+    const accounts = this.getAllAccounts();
+    const account = accounts.find(a => a.id === accountId);
+    if (account) {
+      account.commitCount = Math.max(1, commitCount);
+      localStorage.setItem(MULTI_ACCOUNT_STORAGE_KEY, JSON.stringify(accounts));
+    }
+  },
+
   // Get account by ID
   getAccount(accountId: string): MultiAccountConfig | undefined {
     return this.getAllAccounts().find(a => a.id === accountId);

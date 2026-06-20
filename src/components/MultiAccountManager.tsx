@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Trash2, Power, Refresh, Rocket, Refresh23} from 'reicon-react';
+import { Trash2, Power, Refresh, Rocket, Refresh23 } from 'reicon-react';
 import { multiAccountService } from '../services/multi-account';
 import { encodeToken, decodeToken } from '../services/github';
 import type { MultiAccountConfig, GitHubUser, BoosterConfig } from '../types';
@@ -37,8 +37,10 @@ export function MultiAccountManager({
         onConfirm: () => void;
     } | null>(null);
     const [pushingAll, setPushingAll] = useState(false);
+    // Draft values for commit-count inputs so the field can be emptied while typing
+    const [commitCountDrafts, setCommitCountDrafts] = useState<{ [accountId: string]: string }>({});
     const [pushStatus, setPushStatus] = useState<{
-        [accountId: string]: { status: 'pending' | 'syncing' | 'success' | 'failed'; error?: string }
+        [accountId: string]: { status: 'pending' | 'syncing' | 'success' | 'failed'; error?: string; completed?: number; total?: number }
     }>({});
 
     // PAT input overlay for re-adding token to a specific account
@@ -148,6 +150,35 @@ export function MultiAccountManager({
         );
     };
 
+    const handleCommitCountChange = async (account: MultiAccountConfig, count: number) => {
+        const safeCount = Math.max(1, Math.min(50, Math.floor(count) || 1));
+        const updatedAccount = { ...account, commitCount: safeCount };
+        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+        // Sync draft to the clamped value
+        setCommitCountDrafts(prev => ({ ...prev, [account.id]: String(safeCount) }));
+
+        // Optimistic UI update
+        setAccounts(prev => prev.map(a => (a.id === account.id ? updatedAccount : a)));
+
+        if (isLocalhost) {
+            try {
+                const response = await fetch('/api/multi-account-add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updatedAccount),
+                });
+                if (!response.ok) {
+                    showToast('Failed to save commit count', 'error');
+                }
+            } catch (err: any) {
+                showToast('Error: ' + err.message, 'error');
+            }
+        } else {
+            multiAccountService.updateCommitCount(account.id, safeCount);
+        }
+    };
+
     const handleSwitchAccount = async (account: MultiAccountConfig) => {
         if (!account.token) {
             showToast('Cannot switch: No token stored for this account.', 'error');
@@ -235,6 +266,7 @@ export function MultiAccountManager({
                     config: currentConfig,
                     active: true,
                     lastRun: existingAccount?.lastRun || 0,
+                    commitCount: existingAccount?.commitCount ?? 1,
                 };
 
                 const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -273,68 +305,109 @@ export function MultiAccountManager({
     ) => {
         const filePath = 'activity_log.txt';
         const apiFilePath = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+        const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-        // 1. GET current file to obtain SHA (needed for updates)
-        const getRes = await fetch(apiFilePath, {
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json',
-            }
-        });
+        const MAX_ATTEMPTS = 5;
 
-        let currentSha: string | undefined;
-        let currentContent = '# GitHub Activity Booster - Activity Log\n';
-
-        if (getRes.status === 200) {
-            const data = await getRes.json();
-            currentSha = data.sha;
-            try {
-                // Decode base64 content safely dealing with UTF-8
-                const base64Clean = data.content.replace(/\s/g, '');
-                currentContent = decodeURIComponent(escape(atob(base64Clean)));
-            } catch (e) {
-                try {
-                    currentContent = atob(data.content.replace(/\s/g, ''));
-                } catch (err) {
-                    currentContent = '# GitHub Activity Booster - Activity Log\n';
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            // 1. GET current file to obtain a FRESH SHA on every attempt
+            const getRes = await fetch(`${apiFilePath}?t=${Date.now()}`, {
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Cache-Control': 'no-cache',
                 }
+            });
+
+            let currentSha: string | undefined;
+            let currentContent = '# GitHub Activity Booster - Activity Log\n';
+
+            if (getRes.status === 200) {
+                const data = await getRes.json();
+                currentSha = data.sha;
+                try {
+                    const base64Clean = data.content.replace(/\s/g, '');
+                    currentContent = decodeURIComponent(escape(atob(base64Clean)));
+                } catch (e) {
+                    try {
+                        currentContent = atob(data.content.replace(/\s/g, ''));
+                    } catch (err) {
+                        currentContent = '# GitHub Activity Booster - Activity Log\n';
+                    }
+                }
+            } else if (getRes.status === 404) {
+                currentSha = undefined;
+            } else if (getRes.status === 401) {
+                throw new Error(`Auth failed: HTTP 401 (invalid token)`);
+            } else if (getRes.status === 403 || getRes.status === 429) {
+                // Rate limited on read — back off and retry
+                if (attempt < MAX_ATTEMPTS) {
+                    await sleep(getRetryDelay(getRes, attempt));
+                    continue;
+                }
+                throw new Error(`Rate limited: HTTP ${getRes.status}`);
+            } else {
+                throw new Error(`Failed to read file: HTTP ${getRes.status}`);
             }
-        } else if (getRes.status === 404) {
-            currentSha = undefined;
-        } else if (getRes.status === 401 || getRes.status === 403) {
-            throw new Error(`Auth failed: HTTP ${getRes.status}`);
-        } else {
-            throw new Error(`Failed to read file: HTTP ${getRes.status}`);
-        }
 
-        // 2. Append new log entry
-        const dateStr = new Date().toISOString();
-        const newContent = currentContent.trimEnd() + `\nAuto-commit for ${owner}/${repo}: ${dateStr} - ${commitMessage}\n`;
-        const encodedContent = btoa(unescape(encodeURIComponent(newContent)));
+            // 2. Append new log entry (unique each time to avoid identical content)
+            const dateStr = new Date().toISOString();
+            const newContent = currentContent.trimEnd() +
+                `\nAuto-commit for ${owner}/${repo}: ${dateStr} - ${commitMessage}\n`;
+            const encodedContent = btoa(unescape(encodeURIComponent(newContent)));
 
-        // 3. PUT the updated file
-        const putBody = {
-            message: commitMessage,
-            content: encodedContent,
-            sha: currentSha,
-            author: { name: authorName, email: authorEmail },
-            committer: { name: authorName, email: authorEmail }
-        };
+            // 3. PUT the updated file
+            const putBody = {
+                message: commitMessage,
+                content: encodedContent,
+                sha: currentSha,
+                author: { name: authorName, email: authorEmail },
+                committer: { name: authorName, email: authorEmail }
+            };
 
-        const putRes = await fetch(apiFilePath, {
-            method: 'PUT',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json',
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(putBody),
-        });
+            const putRes = await fetch(apiFilePath, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `token ${token}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(putBody),
+            });
 
-        if (!putRes.ok) {
+            if (putRes.ok) {
+                return; // success
+            }
+
+            // 409 = stale SHA (someone/we just wrote). Retry with a fresh GET.
+            // 403/429 = secondary/abuse rate limit. Back off and retry.
+            if ((putRes.status === 409 || putRes.status === 403 || putRes.status === 429) && attempt < MAX_ATTEMPTS) {
+                await sleep(getRetryDelay(putRes, attempt));
+                continue;
+            }
+
             const errData = await putRes.json().catch(() => ({ message: `HTTP ${putRes.status}` }));
             throw new Error(errData.message || `HTTP ${putRes.status}`);
         }
+
+        throw new Error('Failed after multiple retries (rate limited or conflict).');
+    };
+
+    /** Compute backoff delay honoring GitHub's Retry-After / rate-limit reset headers. */
+    const getRetryDelay = (res: Response, attempt: number): number => {
+        const retryAfter = res.headers.get('Retry-After');
+        if (retryAfter) {
+            const secs = parseInt(retryAfter, 10);
+            if (!isNaN(secs)) return Math.min(secs * 1000, 15000);
+        }
+        const reset = res.headers.get('X-RateLimit-Reset');
+        const remaining = res.headers.get('X-RateLimit-Remaining');
+        if (remaining === '0' && reset) {
+            const resetMs = parseInt(reset, 10) * 1000 - Date.now();
+            if (resetMs > 0) return Math.min(resetMs, 15000);
+        }
+        // Exponential backoff with jitter: ~0.8s, 1.6s, 3.2s, ...
+        return Math.min(800 * Math.pow(2, attempt - 1), 8000) + Math.random() * 300;
     };
 
     const handlePushOneToAll = () => {
@@ -355,92 +428,66 @@ export function MultiAccountManager({
                 setPushingAll(true);
                 const initialProgress: any = {};
                 activeAccounts.forEach(acc => {
-                    initialProgress[acc.id] = { status: 'pending' };
+                    initialProgress[acc.id] = { status: 'pending', completed: 0, total: Math.max(1, acc.commitCount || 1) };
                 });
                 setPushStatus(initialProgress);
 
-                const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                // Always push directly via the GitHub API client-side so that the
+                // exact per-account commitCount is honored with live progress.
+                try {
+                    for (let i = 0; i < activeAccounts.length; i++) {
+                        const account = activeAccounts[i];
+                        const totalCommits = Math.max(1, account.commitCount || 1);
+                        setPushStatus(prev => ({ ...prev, [account.id]: { status: 'syncing', completed: 0, total: totalCommits } }));
 
-                if (isLocalhost) {
-                    try {
-                        const response = await fetch('/api/multi-account-push-all', { method: 'POST' });
-                        if (!response.body) throw new Error('No readable stream in response');
-
-                        const reader = response.body.getReader();
-                        const decoder = new TextDecoder();
-                        let buffer = '';
-
-                        while (true) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-                            buffer += decoder.decode(value, { stream: true });
-                            const lines = buffer.split('\n');
-                            buffer = lines.pop() || '';
-
-                            for (const line of lines) {
-                                if (!line.trim()) continue;
-                                try {
-                                    const chunk = JSON.parse(line);
-                                    if (chunk.status === 'processing') {
-                                        setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'syncing' } }));
-                                    } else if (chunk.status === 'success') {
-                                        setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'success' } }));
-                                    } else if (chunk.status === 'failed') {
-                                        setPushStatus(prev => ({ ...prev, [chunk.accountId]: { status: 'failed', error: chunk.error } }));
-                                    }
-                                } catch (e) {
-                                    console.error('Failed parsing NDJSON:', e);
-                                }
+                        try {
+                            if (!account.token) {
+                                throw new Error('No token stored for this account.');
                             }
-                        }
 
-                        showToast('✅ Push completed for all accounts!', 'success');
-                        await loadAccounts();
-                        setTimeout(() => setPushingAll(false), 1800);
-                    } catch (err: any) {
-                        showToast('❌ Error: ' + err.message, 'error');
-                        setPushingAll(false);
-                    }
-                } else {
-                    // Production client-side direct push fallback using GitHub API
-                    try {
-                        for (let i = 0; i < activeAccounts.length; i++) {
-                            const account = activeAccounts[i];
-                            setPushStatus(prev => ({ ...prev, [account.id]: { status: 'syncing' } }));
+                            const tokenVal = decodeToken(account.token);
+                            if (!tokenVal) {
+                                throw new Error('Failed to decode token.');
+                            }
 
-                            try {
-                                if (!account.token) {
-                                    throw new Error('No token stored for this account.');
-                                }
+                            const authorName = account.user?.name || account.user?.login || 'Booster';
+                            const authorEmail = account.config?.email || `${account.user?.login}@users.noreply.github.com`;
+                            const message = account.config?.message || 'chore: auto boost activity [skip ci]';
 
-                                const tokenVal = decodeToken(account.token);
-                                if (!tokenVal) {
-                                    throw new Error('Failed to decode token.');
-                                }
-
-                                const authorName = account.user?.name || account.user?.login || 'Booster';
-                                const authorEmail = account.config?.email || `${account.user?.login}@users.noreply.github.com`;
-                                const message = account.config?.message || 'chore: auto boost activity [skip ci]';
-                                const commitMsg = `${message} [manual boost]`;
-
+                            for (let c = 0; c < totalCommits; c++) {
+                                const commitMsg = totalCommits > 1
+                                    ? `${message} [manual boost ${c + 1}/${totalCommits}]`
+                                    : `${message} [manual boost]`;
                                 await pushCommitViaClientApi(tokenVal, account.owner, account.repo, commitMsg, authorName, authorEmail);
-
-                                // Update last run time client-side
-                                multiAccountService.updateLastRun(account.id, Date.now());
-                                setPushStatus(prev => ({ ...prev, [account.id]: { status: 'success' } }));
-                            } catch (err: any) {
-                                console.error(`[client-push] Failed for ${account.id}:`, err.message);
-                                setPushStatus(prev => ({ ...prev, [account.id]: { status: 'failed', error: err.message } }));
+                                // Live-update completed count after each successful commit
+                                setPushStatus(prev => ({
+                                    ...prev,
+                                    [account.id]: { status: 'syncing', completed: c + 1, total: totalCommits },
+                                }));
+                                // Throttle between commits to avoid GitHub secondary rate limits
+                                if (c < totalCommits - 1) {
+                                    await new Promise(resolve => setTimeout(resolve, 1200));
+                                }
                             }
-                        }
 
-                        showToast('✅ Push completed for all accounts!', 'success');
-                        await loadAccounts();
-                        setTimeout(() => setPushingAll(false), 2500);
-                    } catch (err: any) {
-                        showToast('❌ Error: ' + err.message, 'error');
-                        setPushingAll(false);
+                            // Update last run time client-side
+                            multiAccountService.updateLastRun(account.id, Date.now());
+                            setPushStatus(prev => ({ ...prev, [account.id]: { status: 'success', completed: totalCommits, total: totalCommits } }));
+                        } catch (err: any) {
+                            console.error(`[client-push] Failed for ${account.id}:`, err.message);
+                            setPushStatus(prev => ({
+                                ...prev,
+                                [account.id]: { status: 'failed', error: err.message, completed: prev[account.id]?.completed || 0, total: totalCommits },
+                            }));
+                        }
                     }
+
+                    showToast('✅ Push completed for all accounts!', 'success');
+                    await loadAccounts();
+                    setTimeout(() => setPushingAll(false), 2500);
+                } catch (err: any) {
+                    showToast('❌ Error: ' + err.message, 'error');
+                    setPushingAll(false);
                 }
             }
         );
@@ -553,7 +600,7 @@ export function MultiAccountManager({
                                             </div>
                                             <span className="mam-card-repo">
                                                 <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style={{ opacity: 0.5, flexShrink: 0 }}>
-                                                    <path d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 010-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z"/>
+                                                    <path d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 010-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z" />
                                                 </svg>
                                                 {account.owner}/{account.repo}
                                             </span>
@@ -562,6 +609,23 @@ export function MultiAccountManager({
                                                 <span>·</span>
                                                 <span>🕐 {account.lastRun ? new Date(account.lastRun).toLocaleString() : 'Never run'}</span>
                                             </span>
+                                            <div className="mam-commit-count-row">
+                                                <label htmlFor={`cc-${account.id}`} className="mam-commit-count-label">
+                                                    🔁 Commits per push:
+                                                </label>
+                                                <input
+                                                    id={`cc-${account.id}`}
+                                                    type="number"
+                                                    min={1}
+                                                    max={50}
+                                                    value={commitCountDrafts[account.id] ?? String(account.commitCount ?? 1)}
+                                                    onChange={(e) => setCommitCountDrafts(prev => ({ ...prev, [account.id]: e.target.value }))}
+                                                    onBlur={(e) => handleCommitCountChange(account, parseInt(e.target.value, 10))}
+                                                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                                    className="mam-commit-count-input"
+                                                    title="Number of commits to push for this account on each boost (1-50)"
+                                                />
+                                            </div>
                                         </div>
                                     </div>
 
@@ -688,16 +752,16 @@ export function MultiAccountManager({
                                             <span className="mam-push-repo">{id}</span>
                                         </div>
                                         <div className="mam-push-status">
-                                            {info.status === 'pending' && <span className="mam-status-pending">⚪ Pending</span>}
+                                            {info.status === 'pending' && <span className="mam-status-pending">⚪ Pending {info.total ? `(0/${info.total})` : ''}</span>}
                                             {info.status === 'syncing' && (
                                                 <span className="mam-status-syncing">
                                                     <span className="mam-pulse-dot" />
-                                                    Pushing...
+                                                    Pushing {info.completed ?? 0}/{info.total ?? 1}...
                                                 </span>
                                             )}
-                                            {info.status === 'success' && <span className="mam-status-success">🟢 Done</span>}
+                                            {info.status === 'success' && <span className="mam-status-success">🟢 {info.completed ?? info.total ?? 1}/{info.total ?? 1} Done</span>}
                                             {info.status === 'failed' && (
-                                                <span className="mam-status-failed" title={info.error}>🔴 Failed</span>
+                                                <span className="mam-status-failed" title={info.error}>🔴 Failed ({info.completed ?? 0}/{info.total ?? 1})</span>
                                             )}
                                         </div>
                                     </div>
@@ -915,6 +979,29 @@ export function MultiAccountManager({
                     color: var(--text-muted);
                     flex-wrap: wrap;
                 }
+                .mam-commit-count-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    margin-top: 0.4rem;
+                }
+                .mam-commit-count-label {
+                    font-size: 0.75rem;
+                    color: var(--text-secondary);
+                    font-weight: 600;
+                }
+                .mam-commit-count-input {
+                    width: 64px;
+                    padding: 0.25rem 0.5rem;
+                    background: rgba(0,0,0,0.3);
+                    border: 1px solid rgba(6, 182, 212, 0.3);
+                    border-radius: 6px;
+                    color: var(--text-primary);
+                    font-size: 0.8rem;
+                    font-family: 'JetBrains Mono', monospace;
+                    outline: none;
+                }
+                .mam-commit-count-input:focus { border-color: rgba(6, 182, 212, 0.6); }
 
                 /* Card actions */
                 .mam-card-actions {

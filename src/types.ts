@@ -22,6 +22,7 @@ export interface MultiAccountConfig {
   config: BoosterConfig;
   active: boolean;
   lastRun?: number;
+  commitCount?: number; // number of commits to push for this account (default 1)
 }
 
 export interface WorkflowRun {
