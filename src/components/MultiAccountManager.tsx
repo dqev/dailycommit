@@ -310,12 +310,13 @@ export function MultiAccountManager({
         const MAX_ATTEMPTS = 5;
 
         for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            // 1. GET current file to obtain a FRESH SHA on every attempt
+            // 1. GET current file to obtain a FRESH SHA on every attempt.
+            //    The ?t= query param busts any browser cache without adding a
+            //    non-safelisted header (which would trigger a CORS preflight).
             const getRes = await fetch(`${apiFilePath}?t=${Date.now()}`, {
                 headers: {
                     'Authorization': `token ${token}`,
                     'Accept': 'application/vnd.github.v3+json',
-                    'Cache-Control': 'no-cache',
                 }
             });
 
